@@ -60,7 +60,12 @@ Progress autosaves to `localStorage` every minute (plus manual Save/Load buttons
 ## What's simulated
 
 - **Conveyors** with per-item positions, spacing/compression, belt-to-belt transfer,
-  and speed tiers
+  and speed tiers — each belt carries **two independent lanes** (left/right) that keep
+  their lane across transfers, with side-loads landing on the near lane
+- **Belt Splitters**, which pull from belts behind them and alternate their output
+  round-robin between the two belts ahead, preserving each item's lane
+- **Tunnel Belts**, placed in entrance/exit pairs (up to 4 tiles apart) that carry
+  items underground with a transit delay based on distance, so belts can cross
 - **Grabber arms** with animated swings that move items between belts and machines
 - **Fueled machines** — drills and furnaces burn coal (energy buffered per item)
 - **Ore depletion** — every tile has a finite richness that drains and empties
@@ -83,7 +88,7 @@ Progress autosaves to `localStorage` every minute (plus manual Save/Load buttons
 ## Roadmap ideas
 
 Power grids, fluids & pipes, trains, enemies/defense, blueprints, a minimap,
-two-lane belts, splitters, and modded recipes are all natural next steps.
+and modded recipes are all natural next steps.
 
 ## Development
 

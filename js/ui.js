@@ -206,6 +206,9 @@ const UI = {
     } else if (k >= '1' && k <= '9') {
       const type = BUILDABLE[+k - 1];
       if (type) this.selectBuild(type);
+    } else if (k === '0') {
+      const type = BUILDABLE[9];
+      if (type) this.selectBuild(type);
     }
   },
 
@@ -226,7 +229,7 @@ const UI = {
     this.ghost.type = this.buildSel;
     this.ghost.gx = tx; this.ghost.gy = ty;
     this.ghost.dir = this.buildDir;
-    this.ghost.ok = canPlace(this.buildSel, tx, ty) && invCount(this.buildSel) > 0;
+    this.ghost.ok = canPlace(this.buildSel, tx, ty, this.buildDir) && invCount(this.buildSel) > 0;
   },
 
   // ---------- panels ----------
@@ -417,6 +420,20 @@ const UI = {
           <div class="row">Picks up from the ${DIR_NAMES[oppositeDir(e.dir)]} side, drops to the ${DIR_NAMES[e.dir]} side.</div>`;
         break;
       }
+      case 'splitter': {
+        html += `<div class="row">Buffer: ${e.buf.map(i => this.iconImg(i.item)).join('') || '<i>empty</i>'}</div>`;
+        html += `<div class="row">Next output goes to side ${e.nextOut === 0 ? 'A' : 'B'} (alternates each item).</div>`;
+        break;
+      }
+      case 'tunnel-belt': {
+        const roleLabel = e.role === 'exit' ? 'Exit' : 'Entrance';
+        html += `<div class="row">Role: ${roleLabel}${e.pairId === null ?
+          ' — <i>unpaired, place another Tunnel Belt facing the same way within 4 tiles</i>' : ''}</div>`;
+        if (e.role === 'entrance') {
+          html += `<div class="row">In transit: ${e.queue.length ? e.queue.map(q => this.iconImg(q.item)).join('') : '<i>none</i>'}</div>`;
+        }
+        break;
+      }
     }
     body.innerHTML = html;
 
@@ -511,6 +528,8 @@ const UI = {
     if (e.type === 'furnace' && e.outCount) text += `<br>out: ${e.outCount} ${ITEMS[e.outItem].name}`;
     if (e.type === 'chest') { let t2 = 0; for (const k in e.store) t2 += e.store[k]; text += `<br>${t2} items`; }
     if (e.type === 'crafter') text += `<br>${e.recipe ? 'making ' + ITEMS[RECIPE_BY_ID[e.recipe].out].name : 'no recipe set'}`;
+    if (e.type === 'splitter') text += `<br>buffer: ${e.buf.length}/${SPLITTER_BUF_CAP}`;
+    if (e.type === 'tunnel-belt') text += `<br>${e.role}${e.pairId === null ? ' (unpaired)' : ''}`;
     text += '<br><i>click to open · right-click to remove</i>';
     tip.innerHTML = text;
     tip.classList.remove('hidden');

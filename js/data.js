@@ -43,6 +43,8 @@ const ITEMS = {
   'furnace':       { name: 'Furnace',        kind: 'machine', color: '#8f8f8f' },
   'crafter':       { name: 'Crafter',        kind: 'machine', color: '#5f8fb0' },
   'study':         { name: 'Study Table',    kind: 'machine', color: '#7a4fc9' },
+  'splitter':      { name: 'Belt Splitter',  kind: 'machine', color: '#c9a23a' },
+  'tunnel-belt':   { name: 'Tunnel Belt',    kind: 'machine', color: '#4a4a52' },
 };
 
 // Recipes.
@@ -65,6 +67,8 @@ const RECIPES = [
   { id: 'furnace',       out: 'furnace',       n: 1, time: 2, in: { 'stone': 8 },                       station: 'craft' },
   { id: 'crafter',       out: 'crafter',       n: 1, time: 4, in: { 'iron-ingot': 9, 'gear': 3, 'circuit': 3 }, station: 'craft', tech: 'automation' },
   { id: 'study',         out: 'study',         n: 1, time: 4, in: { 'stone-brick': 10, 'circuit': 5, 'gear': 5 }, station: 'craft' },
+  { id: 'splitter',      out: 'splitter',      n: 1, time: 2, in: { 'iron-ingot': 4, 'gear': 2, 'circuit': 1 }, station: 'craft', tech: 'logistics' },
+  { id: 'tunnel-belt',   out: 'tunnel-belt',   n: 1, time: 2, in: { 'conveyor': 2, 'iron-ingot': 2, 'gear': 1 }, station: 'craft', tech: 'logistics' },
 ];
 const RECIPE_BY_ID = {};
 for (const r of RECIPES) RECIPE_BY_ID[r.id] = r;
@@ -114,8 +118,20 @@ const ENTITY_DEFS = {
     desc: 'Consumes tomes to research technology.' },
   'fast-conveyor': { name: 'Fast Conveyor', w: 1, h: 1, rot: true, speed: 3, tech: 'logistics',
     desc: 'Moves items twice as fast.' },
+  'splitter':      { name: 'Belt Splitter', w: 2, h: 1, rot: true, tech: 'logistics',
+    desc: 'Pulls from belts behind it and alternates its output between the two tiles ahead.' },
+  'tunnel-belt':   { name: 'Tunnel Belt',   w: 1, h: 1, rot: true, tech: 'logistics',
+    desc: 'Place a second one facing the same way, up to 4 tiles ahead, to route items underground.' },
 };
 const BUILDABLE = Object.keys(ENTITY_DEFS);
+
+// Footprint of `type` at rotation `dir`, in tiles: [width, height] in world axes.
+// ENTITY_DEFS w/h describe the NORTH-facing (dir 0) footprint; odd dirs (E/W) swap them,
+// matching how rotated() swaps the canvas dimensions for sprites.
+function footprintWH(type, dir) {
+  const d = ENTITY_DEFS[type];
+  return (dir % 2) ? [d.h, d.w] : [d.w, d.h];
+}
 
 // Belt item spacing (fraction of a tile) and misc tuning
 const BELT_GAP = 0.3;
@@ -126,6 +142,10 @@ const BURN_RATE = 2;         // energy units per second while working
 const STUDY_CYCLE = 2;       // seconds per research unit per study table
 const CHEST_CAP = 300;
 const HAND_MINE_TIME = 0.4;  // seconds per hand-mined ore
+const LANE_OFFSET = 0.22;    // perpendicular offset (tiles) of each conveyor lane from center
+const TUNNEL_SPEED = 1.5;    // tiles/sec equivalent used to compute tunnel-belt transit delay
+const TUNNEL_RANGE = 4;      // max tile distance a tunnel-belt searches for a partner
+const SPLITTER_BUF_CAP = 2;  // max items a splitter holds mid-transfer
 
 const STARTER_KIT = {
   'drill': 2, 'furnace': 4, 'conveyor': 30, 'grabber': 6, 'chest': 4,
