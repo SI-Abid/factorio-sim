@@ -1,0 +1,5 @@
+# Claude Code session files (agent worktrees, local settings)
+.claude/
+
+# Node / test tooling
+node_modules/
