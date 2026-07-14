@@ -1,35 +1,26 @@
-name: Deploy to GitHub Pages
+name: Publish to GitHub Pages
 
+# Pages serves the gh-pages branch (auto-enabled when that branch first appeared).
+# This workflow keeps it in sync: every push to the development branch fast-forwards
+# gh-pages to the same commit, so the live site always matches the latest code.
 on:
   push:
     branches: [claude/factorio-discussion-5b57cy]
   workflow_dispatch:
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
 concurrency:
-  group: pages
+  group: pages-publish
   cancel-in-progress: true
 
 jobs:
-  deploy:
+  publish:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
-      - name: Configure Pages
-        uses: actions/configure-pages@v5
         with:
-          enablement: true
-      - name: Upload site
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: .
-      - name: Deploy
-        id: deployment
-        uses: actions/deploy-pages@v4
+          fetch-depth: 0
+      - name: Update gh-pages
+        run: git push origin HEAD:gh-pages --force
