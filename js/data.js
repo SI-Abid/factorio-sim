@@ -45,6 +45,9 @@ const ITEMS = {
   'study':         { name: 'Study Table',    kind: 'machine', color: '#7a4fc9' },
   'splitter':      { name: 'Belt Splitter',  kind: 'machine', color: '#c9a23a' },
   'tunnel-belt':   { name: 'Tunnel Belt',    kind: 'machine', color: '#4a4a52' },
+  'generator':     { name: 'Coal Generator', kind: 'machine', color: '#c85a30' },
+  'pylon':         { name: 'Power Pylon',    kind: 'machine', color: '#e8c94a' },
+  'volt-drill':    { name: 'Volt Drill',     kind: 'machine', color: '#4fa8d8' },
 };
 
 // Recipes.
@@ -69,6 +72,9 @@ const RECIPES = [
   { id: 'study',         out: 'study',         n: 1, time: 4, in: { 'stone-brick': 10, 'circuit': 5, 'gear': 5 }, station: 'craft' },
   { id: 'splitter',      out: 'splitter',      n: 1, time: 2, in: { 'iron-ingot': 4, 'gear': 2, 'circuit': 1 }, station: 'craft', tech: 'logistics' },
   { id: 'tunnel-belt',   out: 'tunnel-belt',   n: 1, time: 2, in: { 'conveyor': 2, 'iron-ingot': 2, 'gear': 1 }, station: 'craft', tech: 'logistics' },
+  { id: 'generator',     out: 'generator',     n: 1, time: 3, in: { 'iron-ingot': 10, 'gear': 5, 'circuit': 5 }, station: 'craft', tech: 'electricity' },
+  { id: 'pylon',         out: 'pylon',         n: 1, time: 1, in: { 'iron-ingot': 2, 'wire': 2 },        station: 'craft', tech: 'electricity' },
+  { id: 'volt-drill',    out: 'volt-drill',    n: 1, time: 2, in: { 'iron-ingot': 5, 'gear': 3, 'circuit': 3, 'wire': 5 }, station: 'craft', tech: 'electricity' },
 ];
 const RECIPE_BY_ID = {};
 for (const r of RECIPES) RECIPE_BY_ID[r.id] = r;
@@ -89,6 +95,8 @@ const TECHS = [
     desc: 'Unlocks Fast Conveyors (2× belt speed).' },
   { id: 'adv-tomes',      name: 'Advanced Tomes',    units: 20, packs: ['tome1'], req: [],
     desc: 'Unlocks crafting of Advanced Tomes.' },
+  { id: 'electricity',    name: 'Electricity',      units: 20, packs: ['tome1', 'tome2'], req: ['adv-tomes'],
+    desc: 'Unlocks the Coal Generator, Power Pylon, and Volt Drill.' },
   { id: 'efficiency',     name: 'Efficient Drilling', units: 20, packs: ['tome1', 'tome2'], req: ['adv-tomes'],
     desc: 'Auto-Drills mine 50% faster.' },
   { id: 'adv-automation', name: 'Mass Production',   units: 20, packs: ['tome1', 'tome2'], req: ['automation', 'adv-tomes'],
@@ -122,6 +130,12 @@ const ENTITY_DEFS = {
     desc: 'Pulls from belts behind it and alternates its output between the two tiles ahead.' },
   'tunnel-belt':   { name: 'Tunnel Belt',   w: 1, h: 1, rot: true, tech: 'logistics',
     desc: 'Place a second one facing the same way, up to 4 tiles ahead, to route items underground.' },
+  'generator':     { name: 'Coal Generator', w: 2, h: 2, rot: false, tech: 'electricity',
+    desc: 'Burns coal to supply up to 60 kW of power to any pylon network it touches.' },
+  'pylon':         { name: 'Power Pylon',   w: 1, h: 1, rot: false, tech: 'electricity',
+    desc: 'Supplies power to machines within 5 tiles. Links into one grid with pylons within 7 tiles.' },
+  'volt-drill':    { name: 'Volt Drill',    w: 2, h: 2, rot: true, tech: 'electricity',
+    desc: 'Mines ore beneath it using grid power (1.5× an Auto-Drill\'s speed). Needs no fuel, but stalls without power.' },
 };
 const BUILDABLE = Object.keys(ENTITY_DEFS);
 
@@ -146,6 +160,13 @@ const LANE_OFFSET = 0.22;    // perpendicular offset (tiles) of each conveyor la
 const TUNNEL_SPEED = 1.5;    // tiles/sec equivalent used to compute tunnel-belt transit delay
 const TUNNEL_RANGE = 4;      // max tile distance a tunnel-belt searches for a partner
 const SPLITTER_BUF_CAP = 2;  // max items a splitter holds mid-transfer
+
+// ---------- electricity tuning ----------
+const POLE_RADIUS = 5;         // tiles a single pylon supplies power to (Chebyshev)
+const POLE_LINK_RADIUS = 7;    // pylons within this Chebyshev distance join one network
+const GEN_POWER_KW = 60;       // kW a Coal Generator supplies while burning
+const VOLT_DRILL_KW = 30;      // kW a Volt Drill draws while mining
+const VOLT_DRILL_SPEED_MULT = 1.5; // relative to the Auto-Drill's base speed, at full supply
 
 const STARTER_KIT = {
   'drill': 2, 'furnace': 4, 'conveyor': 30, 'grabber': 6, 'chest': 4,

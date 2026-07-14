@@ -327,6 +327,14 @@ const UI = {
     }
   },
 
+  // Shared "Network: N kW supply / N kW demand (X%)" row for pylons/generators/volt-drills.
+  networkRow(e) {
+    const info = powerNetworkInfo(e);
+    if (!info) return `<div class="row">Grid: not part of any network.</div>`;
+    return `<div class="row">Grid: ${info.poleCount} pylon${info.poleCount === 1 ? '' : 's'} ·
+      ${info.supply} kW supply / ${info.demand} kW demand (${Math.round(info.satisfaction * 100)}%)</div>`;
+  },
+
   openEntityPanel(ent) {
     this.closeAllPanels();
     this.openEnt = ent;
@@ -434,6 +442,29 @@ const UI = {
         }
         break;
       }
+      case 'generator': {
+        html += fuelRow();
+        const status = e.active ? 'generating' : (!e.powered ? 'not connected to a pylon' : 'idle (no fuel)');
+        html += `<div class="row">Status: ${status}</div>`;
+        html += this.networkRow(e);
+        break;
+      }
+      case 'pylon': {
+        html += `<div class="row">Covers a ${POLE_RADIUS}-tile radius; links with pylons within ${POLE_LINK_RADIUS} tiles.</div>`;
+        html += this.networkRow(e);
+        break;
+      }
+      case 'volt-drill': {
+        html += `<div class="row">Output buffer: ${e.outBuf.map(i => this.iconImg(i)).join('') || '<i>empty</i>'}
+          ${e.outBuf.length ? '<button class="mini-btn" data-act="takeout">Take</button>' : ''}</div>`;
+        let status;
+        if (!e.powered) status = 'not connected to a pylon';
+        else if (e.active) status = 'mining';
+        else status = 'idle (output blocked, out of ore, or no power)';
+        html += `<div class="row">Status: ${status}</div>`;
+        html += this.networkRow(e);
+        break;
+      }
     }
     body.innerHTML = html;
 
@@ -530,6 +561,12 @@ const UI = {
     if (e.type === 'crafter') text += `<br>${e.recipe ? 'making ' + ITEMS[RECIPE_BY_ID[e.recipe].out].name : 'no recipe set'}`;
     if (e.type === 'splitter') text += `<br>buffer: ${e.buf.length}/${SPLITTER_BUF_CAP}`;
     if (e.type === 'tunnel-belt') text += `<br>${e.role}${e.pairId === null ? ' (unpaired)' : ''}`;
+    if (e.type === 'generator') text += `<br>fuel: ${e.fuelBuf} coal${e.active ? ' · generating' : ''}${e.powered ? '' : ' · no pylon'}`;
+    if (e.type === 'volt-drill') text += `<br>${!e.powered ? 'no power' : (e.active ? 'mining' : 'idle')}`;
+    if (e.type === 'pylon') {
+      const info = powerNetworkInfo(e);
+      text += info ? `<br>grid: ${Math.round(info.satisfaction * 100)}% supplied` : '<br>isolated (no generator nearby)';
+    }
     text += '<br><i>click to open · right-click to remove</i>';
     tip.innerHTML = text;
     tip.classList.remove('hidden');

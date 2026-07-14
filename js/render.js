@@ -242,6 +242,48 @@ const Renderer = {
         px(4, 4, W - 8, H - 8, '#111114');
         break;
       }
+      case 'generator': {
+        px(0, 0, W, H, '#42342a');
+        px(1, 1, W - 2, H - 2, '#5a4636');
+        px(3, 3, W - 6, H - 6, '#6b5340');
+        // coal firebox window (south face)
+        px(W / 2 - 6, H - 11, 12, 8, '#241c16');
+        px(W / 2 - 4, H - 9, 8, 5, '#c85a30');
+        px(W / 2 - 4, H - 9, 8, 2, '#e88a3a');
+        // chimney + power stub (north)
+        px(W / 2 - 3, 1, 6, 5, '#33281f');
+        px(W / 2 - 1, 0, 2, 3, '#e8c94a');
+        for (const [bx, by] of [[2, 2], [W - 4, 2], [2, H - 4], [W - 4, H - 4]]) px(bx, by, 2, 2, '#241c16');
+        break;
+      }
+      case 'pylon': {
+        // slim mast with a crossbar and a glowing top node — reads at any zoom
+        px(W / 2 - 1, 2, 2, H - 3, '#4a4a52');
+        px(2, 4, W - 4, 2, '#5a5a63');
+        px(3, 5, 1, 1, '#e8c94a'); px(W - 4, 5, 1, 1, '#e8c94a'); // insulators
+        px(W / 2 - 2, H - 3, 4, 3, '#33333a'); // base
+        px(W / 2 - 2, 0, 4, 3, '#e8c94a');     // glowing top node
+        px(W / 2 - 1, 0, 2, 1, '#fff3b0');
+        break;
+      }
+      case 'volt-drill': {
+        px(0, 0, W, H, '#2f4a58');
+        px(1, 1, W - 2, H - 2, '#4fa8d8');
+        px(2, 2, W - 4, 2, '#7ac4e8');
+        // drill housing + bit (same layout as the Auto-Drill, cooler palette)
+        px(8, 8, 16, 16, '#264050');
+        px(10, 10, 12, 12, '#3a6e86');
+        px(14, 14, 4, 4, '#1c3038');
+        for (const [bx, by] of [[2, 2], [W - 4, 2], [2, H - 4], [W - 4, H - 4]]) px(bx, by, 2, 2, '#1c3038');
+        // power bolt badge instead of a coal slot
+        px(W / 2 - 1, 5, 3, 3, '#e8c94a');
+        px(W / 2 - 3, 8, 3, 3, '#e8c94a');
+        px(W / 2, 11, 3, 3, '#e8c94a');
+        // output arrow at north edge
+        px(W / 2 - 1, 0, 2, 4, '#e8c34a');
+        px(W / 2 - 3, 3, 6, 1, '#e8c34a');
+        break;
+      }
     }
     return c;
   },
@@ -346,6 +388,11 @@ const Renderer = {
       ctx.strokeRect(hx, hy, fw * TILE * z, fh * TILE * z);
     }
 
+    // pylon coverage preview, shown while holding a pole or any electric machine
+    if (state.buildSel === 'pylon' || state.buildSel === 'generator' || state.buildSel === 'volt-drill') {
+      this.drawPoleCoverage();
+    }
+
     // build ghost
     if (state.buildSel) {
       const { type, gx, gy, dir, ok } = state.ghost;
@@ -358,6 +405,21 @@ const Renderer = {
       ctx.fillStyle = ok ? '#40ff60' : '#ff4040';
       ctx.fillRect(gsx, gsy, s.width * z, s.height * z);
       ctx.globalAlpha = 1;
+    }
+  },
+
+  // Translucent squares over every existing pylon's coverage (Chebyshev radius).
+  drawPoleCoverage() {
+    const ctx = this.ctx, z = this.cam.zoom;
+    ctx.fillStyle = 'rgba(255, 220, 80, 0.14)';
+    ctx.strokeStyle = 'rgba(255, 220, 80, 0.45)';
+    ctx.lineWidth = 1;
+    for (const e of G.entities.values()) {
+      if (e.type !== 'pylon') continue;
+      const [sx, sy] = this.worldToScreen(e.x - POLE_RADIUS, e.y - POLE_RADIUS);
+      const size = (POLE_RADIUS * 2 + 1) * TILE * z;
+      ctx.fillRect(sx, sy, size, size);
+      ctx.strokeRect(sx, sy, size, size);
     }
   },
 
@@ -435,6 +497,38 @@ const Renderer = {
         ctx.fillRect(cx - 2 * z, cy - 2 * z, 4 * z, 4 * z);
       }
     }
+    if (e.type === 'generator' && e.active) {
+      const flick = 0.5 + 0.5 * Math.sin(G.time * 11 + e.id);
+      ctx.fillStyle = `rgba(255,${140 + 70 * flick | 0},40,0.9)`;
+      ctx.fillRect(ex + (d.w * TILE / 2 - 4) * z, ey + (d.h * TILE - 9) * z, 8 * z, 5 * z);
+      ctx.fillStyle = `rgba(255,244,150,${(0.35 + 0.35 * flick).toFixed(2)})`;
+      ctx.fillRect(ex + (d.w * TILE / 2 - 1) * z, ey + 2 * z, 2 * z, 4 * z);
+    }
+    if (e.type === 'volt-drill' && e.active) {
+      const cx = ex + d.w * TILE * z / 2, cy = ey + d.h * TILE * z / 2;
+      const ang = G.time * 6 + e.id;
+      ctx.strokeStyle = '#8fe0ff';
+      ctx.lineWidth = Math.max(1, z);
+      ctx.beginPath();
+      ctx.moveTo(cx + Math.cos(ang) * 5 * z, cy + Math.sin(ang) * 5 * z);
+      ctx.lineTo(cx - Math.cos(ang) * 5 * z, cy - Math.sin(ang) * 5 * z);
+      ctx.stroke();
+    }
+    if ((e.type === 'generator' || e.type === 'volt-drill') && !e.powered) {
+      this.drawUnpoweredFlicker(ex, ey, d, z, e.id);
+    }
+  },
+
+  // Small flickering yellow lightning bolt over electric machines with no pylon coverage.
+  drawUnpoweredFlicker(ex, ey, d, z, seed) {
+    if (Math.sin(G.time * 9 + seed) <= 0.2) return; // flicker on/off
+    const ctx = this.ctx;
+    const cx = ex + d.w * TILE * z / 2 - 1.5 * z, cy = ey + 2 * z;
+    ctx.fillStyle = '#f5e34a';
+    ctx.fillRect(cx, cy, 3 * z, 3 * z);
+    ctx.fillRect(cx - 2 * z, cy + 3 * z, 3 * z, 3 * z);
+    ctx.fillRect(cx + 1 * z, cy + 6 * z, 3 * z, 3 * z);
+    ctx.fillRect(cx - 1 * z, cy + 9 * z, 3 * z, 3 * z);
   },
 
   drawBelt(e) {
