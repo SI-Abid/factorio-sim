@@ -43,6 +43,9 @@ const ITEMS = {
   'furnace':       { name: 'Furnace',        kind: 'machine', color: '#8f8f8f' },
   'crafter':       { name: 'Crafter',        kind: 'machine', color: '#5f8fb0' },
   'study':         { name: 'Study Table',    kind: 'machine', color: '#7a4fc9' },
+  'bolt':          { name: 'Bolt',           kind: 'bolt',    color: '#c9c245', color2: '#8f8a2e' },
+  'wall':          { name: 'Wall',           kind: 'machine', color: '#8a8a8a' },
+  'turret':        { name: 'Bolt Turret',    kind: 'machine', color: '#5a6a3a' },
 };
 
 // Recipes.
@@ -65,6 +68,9 @@ const RECIPES = [
   { id: 'furnace',       out: 'furnace',       n: 1, time: 2, in: { 'stone': 8 },                       station: 'craft' },
   { id: 'crafter',       out: 'crafter',       n: 1, time: 4, in: { 'iron-ingot': 9, 'gear': 3, 'circuit': 3 }, station: 'craft', tech: 'automation' },
   { id: 'study',         out: 'study',         n: 1, time: 4, in: { 'stone-brick': 10, 'circuit': 5, 'gear': 5 }, station: 'craft' },
+  { id: 'bolt',          out: 'bolt',          n: 4, time: 1, in: { 'iron-ingot': 1 },                  station: 'craft' },
+  { id: 'wall',          out: 'wall',          n: 1, time: 2, in: { 'stone-brick': 4 },                 station: 'craft', tech: 'fortification' },
+  { id: 'turret',        out: 'turret',        n: 1, time: 3, in: { 'iron-ingot': 4, 'gear': 2, 'circuit': 2 }, station: 'craft', tech: 'fortification' },
 ];
 const RECIPE_BY_ID = {};
 for (const r of RECIPES) RECIPE_BY_ID[r.id] = r;
@@ -91,6 +97,8 @@ const TECHS = [
     desc: 'Crafters work 50% faster.' },
   { id: 'omega',          name: 'Omega Research',    units: 40, packs: ['tome1', 'tome2'], req: ['logistics', 'efficiency', 'adv-automation'],
     desc: 'The final breakthrough. Completes the game.' },
+  { id: 'fortification',  name: 'Fortification',    units: 10, packs: ['tome1'], req: [],
+    desc: 'Unlocks Walls and Bolt Turrets to defend against hostile creatures.' },
 ];
 const TECH_BY_ID = {};
 for (const t of TECHS) TECH_BY_ID[t.id] = t;
@@ -98,24 +106,31 @@ for (const t of TECHS) TECH_BY_ID[t.id] = t;
 // Placeable entities. `speed` (tiles/sec) marks conveyor-type entities.
 // Hotbar order = order here.
 const ENTITY_DEFS = {
-  'conveyor':      { name: 'Conveyor',      w: 1, h: 1, rot: true,  speed: 1.5,
+  'conveyor':      { name: 'Conveyor',      w: 1, h: 1, rot: true,  speed: 1.5, hp: 50,
     desc: 'Moves items. Rotate with R.' },
-  'grabber':       { name: 'Grabber Arm',   w: 1, h: 1, rot: true,
+  'grabber':       { name: 'Grabber Arm',   w: 1, h: 1, rot: true, hp: 50,
     desc: 'Picks up from the tile behind, drops to the tile in front.' },
-  'drill':         { name: 'Auto-Drill',    w: 2, h: 2, rot: true,
+  'drill':         { name: 'Auto-Drill',    w: 2, h: 2, rot: true, hp: 150,
     desc: 'Mines ore beneath it. Burns coal. Outputs at the arrow.' },
-  'furnace':       { name: 'Furnace',       w: 2, h: 2, rot: false,
+  'furnace':       { name: 'Furnace',       w: 2, h: 2, rot: false, hp: 150,
     desc: 'Smelts ore into ingots. Burns coal.' },
-  'chest':         { name: 'Chest',         w: 1, h: 1, rot: false, cap: 300,
+  'chest':         { name: 'Chest',         w: 1, h: 1, rot: false, cap: 300, hp: 80,
     desc: 'Stores up to 300 items.' },
-  'crafter':       { name: 'Crafter',       w: 3, h: 3, rot: false, tech: 'automation',
+  'crafter':       { name: 'Crafter',       w: 3, h: 3, rot: false, tech: 'automation', hp: 200,
     desc: 'Automatically crafts a chosen recipe.' },
-  'study':         { name: 'Study Table',   w: 3, h: 3, rot: false,
+  'study':         { name: 'Study Table',   w: 3, h: 3, rot: false, hp: 200,
     desc: 'Consumes tomes to research technology.' },
-  'fast-conveyor': { name: 'Fast Conveyor', w: 1, h: 1, rot: true, speed: 3, tech: 'logistics',
+  'fast-conveyor': { name: 'Fast Conveyor', w: 1, h: 1, rot: true, speed: 3, tech: 'logistics', hp: 50,
     desc: 'Moves items twice as fast.' },
+  'den':           { name: 'Creature Den',  w: 3, h: 3, rot: false, hp: 300,
+    desc: 'A hostile creature den. Cannot be built or removed by the player.' },
+  'wall':          { name: 'Wall',          w: 1, h: 1, rot: false, tech: 'fortification', hp: 300,
+    desc: 'A sturdy barrier. Blocks movement; has no other function.' },
+  'turret':        { name: 'Bolt Turret',   w: 1, h: 1, rot: false, tech: 'fortification', hp: 150, cap: 20,
+    desc: 'Auto-fires bolts at hostile creatures within range.' },
 };
-const BUILDABLE = Object.keys(ENTITY_DEFS);
+// BUILDABLE = hotbar order. 'den' is worldgen-only and excluded (not player-placeable).
+const BUILDABLE = Object.keys(ENTITY_DEFS).filter(t => t !== 'den');
 
 // Belt item spacing (fraction of a tile) and misc tuning
 const BELT_GAP = 0.3;
@@ -126,6 +141,30 @@ const BURN_RATE = 2;         // energy units per second while working
 const STUDY_CYCLE = 2;       // seconds per research unit per study table
 const CHEST_CAP = 300;
 const HAND_MINE_TIME = 0.4;  // seconds per hand-mined ore
+
+// ---------- pollution ----------
+const POLLUTION_CELL = 8;              // tiles per pollution grid cell (coarse)
+const POLLUTION_EMIT_RATE = 3;         // pollution/sec emitted by an actively-working fueled machine
+const POLLUTION_DECAY_RATE = 0.03;     // fraction of a cell's pollution that decays per second
+const POLLUTION_DIFFUSE_RATE = 0.15;   // fraction exchanged with neighbor cells per second
+const POLLUTION_CAP = 400;             // clamp per cell
+
+// ---------- creature dens & smoglings ----------
+const DEN_COUNT = 8;
+const DEN_MIN_DIST = 45;               // tiles from world center
+const DEN_SPAWN_INTERVAL = 30;         // seconds between a den's spawn checks
+const DEN_SPAWN_THRESHOLD = 40;        // pollution level (in the den's cell) required to spawn
+const SMOGLING_HP = 30;
+const SMOGLING_SPEED = 2;              // tiles/sec
+const SMOGLING_DPS = 10;               // melee damage per second while in contact
+const CREATURE_ATTACK_RANGE = 0.65;    // extra tiles of reach beyond a target's half-size
+
+// ---------- defenses ----------
+const TURRET_RANGE = 7;                // tiles
+const TURRET_RATE = 2;                 // shots/sec
+const TURRET_DAMAGE = 15;
+const TURRET_AMMO_CAP = 20;
+const REPAIR_COST = { 'iron-ingot': 2 };
 
 const STARTER_KIT = {
   'drill': 2, 'furnace': 4, 'conveyor': 30, 'grabber': 6, 'chest': 4,

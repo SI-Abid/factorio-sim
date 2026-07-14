@@ -47,7 +47,7 @@ coal, and stone**. Mine by hand, then automate:
 |---|---|
 | WASD / arrows / middle-drag | Pan camera |
 | Mouse wheel | Zoom |
-| 1–8 / hotbar click | Select building |
+| 1–9 / hotbar click | Select building |
 | R | Rotate before placing |
 | Left-click / drag | Place (drag lays conveyor lines) · mine ore · open machine |
 | Right-click | Cancel selection / remove machine (refunds it + contents) |
@@ -67,6 +67,12 @@ Progress autosaves to `localStorage` every minute (plus manual Save/Load buttons
 - **Crafters** with selectable recipes, input/output buffers, and ingredient limits
 - **Research** — study tables consume tomes to progress a shared tech tree that
   unlocks recipes, buildings, and speed multipliers
+- **Pollution & defense** — working drills/furnaces emit pollution on a coarse grid
+  that diffuses and decays; distant creature dens spawn hostile **smoglings** when
+  nearby pollution runs high enough. They path toward your machines and attack
+  anything they bump into. Research **Fortification** to build **Walls** and
+  **Bolt Turrets** (fed with **Bolts**) for defense, and repair damaged machines
+  from their entity panel. A **Peaceful mode** toggle (Help panel) disables spawns.
 - **Hand crafting** with a queue, plus a guided hint line for new players
 
 ## Code layout
@@ -82,7 +88,7 @@ Progress autosaves to `localStorage` every minute (plus manual Save/Load buttons
 
 ## Roadmap ideas
 
-Power grids, fluids & pipes, trains, enemies/defense, blueprints, a minimap,
+Power grids, fluids & pipes, trains, ranged/flying creatures, blueprints, a minimap,
 two-lane belts, splitters, and modded recipes are all natural next steps.
 
 ## Development

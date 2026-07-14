@@ -14,6 +14,8 @@ const G = {
   stats: { mined: 0, smelted: 0, crafted: 0, placed: {} },
   victory: false,
   victoryShown: false,
+  creatures: [],          // [{id, x, y (fractional), hp, target: entityId|null}]
+  peaceful: false,        // when true, dens never spawn creatures
 };
 
 function keyXY(x, y) { return x + ',' + y; }
@@ -62,6 +64,8 @@ function canPlace(type, x, y) {
 
 function makeEntity(type, x, y, dir) {
   const e = { id: G.nextId++, type, x, y, dir: dir || 0 };
+  const d = ENTITY_DEFS[type];
+  if (d && d.hp !== undefined) e.hp = d.hp;
   switch (type) {
     case 'conveyor': case 'fast-conveyor':
       e.items = []; break;                       // [{item, pos 0..1}]
@@ -78,8 +82,23 @@ function makeEntity(type, x, y, dir) {
       e.recipe = null; e.input = {}; e.output = {}; e.progress = 0; e.active = false; break;
     case 'study':
       e.packs = { tome1: 0, tome2: 0 }; e.progress = 0; break;
+    case 'turret':
+      e.ammo = 0; e.cooldown = 0; e.fireFx = 0; e.fireTarget = null; break;
+    case 'den':
+      e.spawnTimer = 5 + Math.random() * DEN_SPAWN_INTERVAL; break;
   }
   return e;
+}
+
+// Place a worldgen-only den directly (bypasses inventory — dens aren't player-buildable).
+function spawnDen(x, y) {
+  const e = makeEntity('den', x, y, 0);
+  G.entities.set(e.id, e);
+  for (const [tx, ty] of tilesOf('den', x, y)) G.byTile.set(keyXY(tx, ty), e);
+  return e;
+}
+function spawnDens() {
+  for (const [x, y] of (World.denSpawns || [])) spawnDen(x, y);
 }
 
 // Place from player inventory. Returns entity or null.
@@ -98,6 +117,7 @@ function placeEntity(type, x, y, dir) {
 function removeEntity(e) {
   G.entities.delete(e.id);
   for (const [tx, ty] of tilesOf(e.type, e.x, e.y)) G.byTile.delete(keyXY(tx, ty));
+  if (e.type === 'den') return; // worldgen-only; never refunded (there's no such inventory item)
   invAdd(e.type, 1);
   if (e.items) for (const it of e.items) invAdd(it.item, 1);
   if (e.hold) invAdd(e.hold, 1);
@@ -109,6 +129,26 @@ function removeEntity(e) {
   if (e.input) for (const k in e.input) invAdd(k, e.input[k]);
   if (e.output) for (const k in e.output) invAdd(k, e.output[k]);
   if (e.packs) { invAdd('tome1', e.packs.tome1 || 0); invAdd('tome2', e.packs.tome2 || 0); }
+  if (e.ammo) invAdd('bolt', e.ammo);
+}
+
+// Damage a player entity (from a creature). Destroys it (no refund) at 0 HP.
+function damageEntity(e, dmg) {
+  if (e.hp === undefined) e.hp = (ENTITY_DEFS[e.type] && ENTITY_DEFS[e.type].hp) || 100;
+  e.hp -= dmg;
+  if (e.hp <= 0) destroyEntity(e);
+}
+
+function destroyEntity(e) {
+  if (!G.entities.has(e.id)) return;
+  const d = ENTITY_DEFS[e.type];
+  const cx = e.x + d.w / 2, cy = e.y + d.h / 2;
+  G.entities.delete(e.id);
+  for (const [tx, ty] of tilesOf(e.type, e.x, e.y)) G.byTile.delete(keyXY(tx, ty));
+  if (typeof UI !== 'undefined') {
+    UI.toast(d.name + ' destroyed by a smogling!');
+    UI.markDestroyed(cx, cy);
+  }
 }
 
 // Drill output tile (adjacent, on the facing side).
@@ -160,6 +200,10 @@ function insertIntoEntity(e, item) {
         e.packs[item] = (e.packs[item] || 0) + 1;
         return true;
       }
+      return false;
+    }
+    case 'turret': {
+      if (item === 'bolt' && e.ammo < TURRET_AMMO_CAP) { e.ammo++; return true; }
       return false;
     }
   }
@@ -435,12 +479,114 @@ function updateCraftQueue(dt) {
   }
 }
 
+// ---------- creature dens ----------
+
+function updateDen(e, dt) {
+  e.spawnTimer -= dt;
+  if (e.spawnTimer > 0) return;
+  e.spawnTimer = DEN_SPAWN_INTERVAL;
+  if (G.peaceful) return;
+  const cx = e.x + 1, cy = e.y + 1; // center tile of the 3x3 den
+  if (World.pollutionAt(cx, cy) >= DEN_SPAWN_THRESHOLD) {
+    G.creatures.push({ id: G.nextId++, x: e.x + 1.5, y: e.y + 1.5, hp: SMOGLING_HP, target: null });
+    if (typeof UI !== 'undefined') UI.toast('A smogling emerges from a den!');
+  }
+}
+
+// ---------- bolt turret ----------
+
+function updateTurret(e, dt) {
+  if (e.cooldown > 0) e.cooldown -= dt;
+  if (e.fireFx > 0) e.fireFx -= dt;
+  if (e.ammo <= 0 || e.cooldown > 0) return;
+  const cx = e.x + 0.5, cy = e.y + 0.5;
+  let best = null, bestD = Infinity;
+  for (const cr of G.creatures) {
+    const d = Math.hypot(cr.x - cx, cr.y - cy);
+    if (d <= TURRET_RANGE && d < bestD) { bestD = d; best = cr; }
+  }
+  if (!best) return;
+  e.ammo--;
+  best.hp -= TURRET_DAMAGE;
+  e.cooldown = 1 / TURRET_RATE;
+  e.fireFx = 0.12;
+  e.fireTarget = { x: best.x, y: best.y };
+  if (best.hp <= 0) {
+    const idx = G.creatures.indexOf(best);
+    if (idx >= 0) G.creatures.splice(idx, 1);
+    if (typeof UI !== 'undefined') UI.toast('Smogling destroyed');
+  }
+}
+
+// ---------- creatures (smoglings) ----------
+
+// Nearest fueled/polluting machine (drill/furnace) if any exist, else nearest entity at all.
+function findCreatureTarget(cx, cy) {
+  let best = null, bestD = Infinity, bestAny = null, bestAnyD = Infinity;
+  for (const e of G.entities.values()) {
+    if (e.type === 'den') continue;
+    const d0 = ENTITY_DEFS[e.type];
+    const ecx = e.x + d0.w / 2, ecy = e.y + d0.h / 2;
+    const d = Math.hypot(ecx - cx, ecy - cy);
+    if ((e.type === 'drill' || e.type === 'furnace') && d < bestD) { bestD = d; best = e; }
+    if (d < bestAnyD) { bestAnyD = d; bestAny = e; }
+  }
+  return best || bestAny;
+}
+
+function updateCreature(cr, dt) {
+  if (cr.target == null || !G.entities.has(cr.target)) {
+    const t = findCreatureTarget(cr.x, cr.y);
+    cr.target = t ? t.id : null;
+  }
+  if (cr.target == null) return;
+  const target = G.entities.get(cr.target);
+  if (!target) { cr.target = null; return; }
+  const d0 = ENTITY_DEFS[target.type];
+  const tcx = target.x + d0.w / 2, tcy = target.y + d0.h / 2;
+  const dx = tcx - cr.x, dy = tcy - cr.y;
+  const dist = Math.hypot(dx, dy);
+  const reach = CREATURE_ATTACK_RANGE + Math.max(d0.w, d0.h) / 2;
+  if (dist <= reach) {
+    damageEntity(target, SMOGLING_DPS * dt);
+    if (!G.entities.has(target.id)) cr.target = null;
+    return;
+  }
+  const step = SMOGLING_SPEED * dt;
+  const ux = dx / dist, uy = dy / dist;
+  const tryX = cr.x + ux * step, tryY = cr.y + uy * step;
+  const blockerAt = (x, y) => {
+    const b = entityAt(Math.floor(x), Math.floor(y));
+    return (b && b.type !== 'den') ? b : null;
+  };
+  const blocker = blockerAt(tryX, tryY);
+  if (!blocker) { cr.x = tryX; cr.y = tryY; return; }
+  // Simple slide: only meaningful for diagonal movement (try one axis at a time).
+  // For axis-aligned movement there's no alternate axis to slide along — attack instead.
+  if (ux !== 0 && uy !== 0) {
+    const bx = blockerAt(tryX, cr.y);
+    if (!bx) { cr.x = tryX; return; }
+    const by = blockerAt(cr.x, tryY);
+    if (!by) { cr.y = tryY; return; }
+  }
+  // fully blocked: bump-attack whatever is in the way
+  damageEntity(blocker, SMOGLING_DPS * dt);
+}
+
+function updateCreatures(dt) {
+  for (let i = G.creatures.length - 1; i >= 0; i--) {
+    updateCreature(G.creatures[i], dt);
+    if (G.creatures[i].hp <= 0) G.creatures.splice(i, 1);
+  }
+}
+
 // ---------- main tick ----------
 
 function simTick(dt) {
   G.time += dt;
   updateHandMine(dt);
   updateCraftQueue(dt);
+  World.updatePollution(dt);
   for (const e of G.entities.values()) {
     switch (e.type) {
       case 'conveyor': case 'fast-conveyor': updateBelt(e, dt); break;
@@ -448,12 +594,18 @@ function simTick(dt) {
       case 'furnace': updateFurnace(e, dt); break;
       case 'crafter': updateCrafter(e, dt); break;
       case 'study': updateStudy(e, dt); break;
+      case 'den': updateDen(e, dt); break;
+      case 'turret': updateTurret(e, dt); break;
+    }
+    if ((e.type === 'drill' || e.type === 'furnace') && e.active) {
+      World.addPollution(e.x, e.y, POLLUTION_EMIT_RATE * dt);
     }
   }
   // grabbers after everything else so they see settled belt state
   for (const e of G.entities.values()) {
     if (e.type === 'grabber') updateGrabber(e, dt);
   }
+  updateCreatures(dt);
 }
 
 // ---------- save / load ----------
@@ -473,6 +625,9 @@ function saveGame() {
     entities: ents,
     oreType: Array.from(World.oreType),
     oreAmount: Array.from(World.oreAmount),
+    pollution: Array.from(World.pollution),
+    creatures: G.creatures,
+    peaceful: G.peaceful,
   });
 }
 
@@ -480,9 +635,12 @@ function loadGame(json) {
   const s = JSON.parse(json);
   if (s.v !== 1) throw new Error('Unknown save version');
   G.seed = s.seed;
-  World.generate(s.seed); // regenerate terrain textures, then overwrite ore state
+  World.generate(s.seed); // regenerate terrain textures/pollution grid/den spawns, then overwrite ore & pollution state
   World.oreType = Uint8Array.from(s.oreType);
   World.oreAmount = Int32Array.from(s.oreAmount);
+  if (Array.isArray(s.pollution) && s.pollution.length === World.pollution.length) {
+    World.pollution = Float32Array.from(s.pollution);
+  }
   G.time = s.time;
   G.nextId = s.nextId;
   G.inv = s.inv || {};
@@ -490,13 +648,22 @@ function loadGame(json) {
   G.stats = s.stats || { mined: 0, smelted: 0, crafted: 0, placed: {} };
   G.victory = !!(s.research && s.research.done && s.research.done.omega);
   G.victoryShown = !!s.victoryShown;
+  G.peaceful = !!s.peaceful;
   G.craftQueue = [];
   G.handMine = null;
   G.entities = new Map();
   G.byTile = new Map();
+  let hasDen = false;
   for (const e of s.entities) {
+    // backward compat: saves from before HP existed default to full health
+    if (e.hp === undefined && ENTITY_DEFS[e.type] && ENTITY_DEFS[e.type].hp !== undefined) e.hp = ENTITY_DEFS[e.type].hp;
+    if (e.type === 'den') hasDen = true;
     G.entities.set(e.id, e);
     for (const [tx, ty] of tilesOf(e.type, e.x, e.y)) G.byTile.set(keyXY(tx, ty), e);
   }
+  // backward compat: saves from before dens existed get them seeded in now (pollution starts at
+  // zero for them too, so there's no immediate danger — it has to build back up first).
+  if (!hasDen) spawnDens();
+  G.creatures = Array.isArray(s.creatures) ? s.creatures : [];
   if (typeof Renderer !== 'undefined' && Renderer.ready) Renderer.redrawTerrain();
 }

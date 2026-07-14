@@ -218,7 +218,57 @@ const Renderer = {
         for (const [rx, ry] of [[6, 6], [W - 8, 8], [8, H - 8], [W - 10, H - 10]]) px(rx, ry, 2, 2, '#c9b84f');
         break;
       }
+      case 'wall': {
+        px(0, 0, W, H, '#6e6e6e');
+        px(1, 1, W - 2, H - 2, '#8a8a8a');
+        // brick/mortar pattern, two courses
+        px(0, 5, W, 1, '#5c5c5c'); px(0, 11, W, 1, '#5c5c5c');
+        px(4, 0, 1, 5, '#5c5c5c'); px(11, 0, 1, 5, '#5c5c5c');
+        px(0, 6, 1, 5, '#5c5c5c'); px(8, 6, 1, 5, '#5c5c5c');
+        px(4, 12, 1, 4, '#5c5c5c'); px(11, 12, 1, 4, '#5c5c5c');
+        px(0, 0, W, 1, '#4c4c4c'); px(0, H - 1, W, 1, '#4c4c4c');
+        px(0, 0, 1, H, '#4c4c4c'); px(W - 1, 0, 1, H, '#4c4c4c');
+        break;
+      }
+      case 'turret': {
+        px(0, 0, W, H, '#4a5240');
+        px(1, 1, W - 2, H - 2, '#5a6a48');
+        px(2, 2, W - 4, 2, '#6d7f58');
+        px(5, 5, 6, 6, '#333c2c');   // rotating base (barrel drawn dynamically)
+        px(6, 6, 4, 4, '#242b1e');
+        for (const [bx, by] of [[2, 2], [W - 4, 2], [2, H - 4], [W - 4, H - 4]]) px(bx, by, 2, 2, '#2c3324');
+        break;
+      }
+      case 'den': {
+        // an ominous, cracked mound — original design, no fixed facing
+        px(0, 0, W, H, '#302a20');
+        const rng = makeRng(4321);
+        for (let i = 0; i < 60; i++) {
+          const gx = Math.floor(rng() * (W / 2)) * 2, gy = Math.floor(rng() * (H / 2)) * 2;
+          px(gx, gy, 4, 3, rng() > 0.5 ? '#3a331f' : '#463c24');
+        }
+        px(W / 2 - 10, H / 2 - 8, 20, 16, '#241f14');
+        px(W / 2 - 6, H / 2 - 4, 12, 8, '#120f0a');
+        // faint sickly-green pollution glow flecks
+        for (const [gx, gy] of [[6, 6], [W - 10, 8], [10, H - 10], [W - 14, H - 14]]) px(gx, gy, 3, 3, '#3a5a2a');
+        break;
+      }
     }
+    return c;
+  },
+
+  // Small dark-green blob creature ("smogling"), drawn facing no particular direction.
+  creatureSprite() {
+    if (this._smogSprite) return this._smogSprite;
+    const c = this.makeCanvas(TILE, TILE);
+    const x = c.getContext('2d');
+    const px = (a, b, w, h, col) => { x.fillStyle = col; x.fillRect(a, b, w, h); };
+    px(4, 6, 8, 7, '#2d4a1e');
+    px(3, 7, 10, 5, '#25401a');
+    px(5, 5, 2, 2, '#39602a'); px(9, 5, 2, 2, '#39602a'); // little horns/bumps
+    px(5, 9, 2, 2, '#0e0e0e'); px(9, 9, 2, 2, '#0e0e0e'); // eyes
+    px(6, 13, 1, 2, '#1c2e12'); px(9, 13, 1, 2, '#1c2e12'); // feet
+    this._smogSprite = c;
     return c;
   },
 
@@ -268,6 +318,12 @@ const Renderer = {
         px(11, 3, 2, 11, '#e8e4d8');   // page edge
         px(5, 5, 6, 1, '#e8e4d8'); px(5, 7, 6, 1, '#e8e4d8');
         break;
+      case 'bolt':
+        px(6, 1, 4, 3, def.color2);   // head
+        px(6, 4, 4, 9, def.color);    // shaft
+        px(5, 12, 6, 2, def.color2);  // fin
+        px(7, 5, 1, 6, 'rgba(255,255,255,0.4)');
+        break;
       case 'machine': {
         const s = this.sprite(id, 0);
         x.drawImage(s, 0, 0, s.width, s.height, 1, 1, 14, 14);
@@ -293,23 +349,34 @@ const Renderer = {
     const [sx, sy] = [(0 - wx0) * z, (0 - wy0) * z];
     ctx.drawImage(this.terrain, sx, sy, this.terrain.width * z, this.terrain.height * z);
 
+    // pollution haze (subtle, drawn under entities so buildings stay crisp)
+    this.drawPollutionHaze(wx0, wy0, CW, CH);
+
     // entities (viewport-culled)
     const tx0 = Math.floor(wx0 / TILE) - 3, ty0 = Math.floor(wy0 / TILE) - 3;
     const tx1 = Math.ceil((wx0 + CW / z) / TILE) + 3, ty1 = Math.ceil((wy0 + CH / z) / TILE) + 3;
     const drawn = new Set();
-    const belts = [], others = [], grabbers = [];
+    const belts = [], others = [], grabbers = [], turrets = [];
     for (const e of G.entities.values()) {
       if (e.x + ENTITY_DEFS[e.type].w < tx0 || e.x > tx1 || e.y + ENTITY_DEFS[e.type].h < ty0 || e.y > ty1) continue;
       if (drawn.has(e.id)) continue;
       drawn.add(e.id);
       if (isBelt(e)) belts.push(e);
       else if (e.type === 'grabber') grabbers.push(e);
+      else if (e.type === 'turret') turrets.push(e);
       else others.push(e);
     }
 
     for (const e of belts) this.drawBelt(e);
     for (const e of others) this.drawEntity(e);
     for (const e of grabbers) this.drawGrabber(e);
+    for (const e of turrets) this.drawTurret(e);
+
+    // creatures (smoglings)
+    for (const cr of G.creatures) {
+      if (cr.x < tx0 || cr.x > tx1 || cr.y < ty0 || cr.y > ty1) continue;
+      this.drawCreature(cr);
+    }
 
     // hover highlight
     if (state.hoverEnt) {
@@ -335,12 +402,26 @@ const Renderer = {
     }
   },
 
+  // A thin HP bar over any entity below full health.
+  drawHpBar(ex, ey, wPx, e, maxHp) {
+    if (maxHp === undefined || e.hp === undefined || e.hp >= maxHp) return;
+    const ctx = this.ctx, z = this.cam.zoom;
+    const barW = wPx, barH = Math.max(2, 3 * z * 0.6);
+    const bx = ex, by = ey - barH - 2 * z;
+    const frac = Math.max(0, e.hp / maxHp);
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.fillRect(bx - 1, by - 1, barW + 2, barH + 2);
+    ctx.fillStyle = frac > 0.5 ? '#5fbf4a' : (frac > 0.25 ? '#e0a83a' : '#c93f3f');
+    ctx.fillRect(bx, by, barW * frac, barH);
+  },
+
   drawEntity(e) {
     const ctx = this.ctx, z = this.cam.zoom;
     const d = ENTITY_DEFS[e.type];
     const s = this.sprite(e.type, d.rot ? e.dir : 0);
     const [ex, ey] = this.worldToScreen(e.x, e.y);
     ctx.drawImage(s, ex, ey, d.w * TILE * z, d.h * TILE * z);
+    this.drawHpBar(ex, ey, d.w * TILE * z, e, d.hp);
 
     // dynamic bits
     if (e.type === 'furnace' && e.active) {
@@ -427,5 +508,73 @@ const Renderer = {
     ctx.fillStyle = '#8a6a20';
     ctx.fillRect(hxs - 2 * z, hys - 2 * z, 4 * z, 4 * z);
     if (e.hold) ctx.drawImage(this.icon(e.hold), hxs - 5 * z, hys - 5 * z, 10 * z, 10 * z);
+  },
+
+  // Faint brown haze over polluted pollution-grid cells. Alpha is capped low so it stays subtle.
+  drawPollutionHaze(wx0, wy0, CW, CH) {
+    if (!World.pollution) return;
+    const ctx = this.ctx, z = this.cam.zoom;
+    const cellPx = POLLUTION_CELL * TILE;
+    const cx0 = Math.max(0, Math.floor(wx0 / cellPx) - 1);
+    const cy0 = Math.max(0, Math.floor(wy0 / cellPx) - 1);
+    const cx1 = Math.min(World.pollW - 1, Math.ceil((wx0 + CW / z) / cellPx) + 1);
+    const cy1 = Math.min(World.pollH - 1, Math.ceil((wy0 + CH / z) / cellPx) + 1);
+    for (let cy = cy0; cy <= cy1; cy++) {
+      for (let cx = cx0; cx <= cx1; cx++) {
+        const p = World.pollution[cy * World.pollW + cx];
+        if (p < 1) continue;
+        const alpha = Math.min(0.16, (p / 300) * 0.16);
+        if (alpha < 0.01) continue;
+        const [sx, sy] = this.worldToScreen(cx * POLLUTION_CELL, cy * POLLUTION_CELL);
+        ctx.fillStyle = `rgba(90,70,40,${alpha})`;
+        ctx.fillRect(sx, sy, cellPx * z, cellPx * z);
+      }
+    }
+  },
+
+  drawTurret(e) {
+    const ctx = this.ctx, z = this.cam.zoom;
+    const d = ENTITY_DEFS.turret;
+    const s = this.sprite('turret', 0);
+    const [ex, ey] = this.worldToScreen(e.x, e.y);
+    ctx.drawImage(s, ex, ey, TILE * z, TILE * z);
+    this.drawHpBar(ex, ey, TILE * z, e, d.hp);
+
+    const cx = ex + TILE * z / 2, cy = ey + TILE * z / 2;
+    let ang = -Math.PI / 2, tsx = cx, tsy = cy - 7 * z;
+    if (e.fireTarget) {
+      [tsx, tsy] = this.worldToScreen(e.fireTarget.x, e.fireTarget.y);
+      ang = Math.atan2(tsy - cy, tsx - cx);
+    }
+    ctx.strokeStyle = '#333c2c';
+    ctx.lineWidth = Math.max(2, 3 * z);
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(cx + Math.cos(ang) * 7 * z, cy + Math.sin(ang) * 7 * z);
+    ctx.stroke();
+
+    if (e.fireFx > 0 && e.fireTarget) {
+      ctx.strokeStyle = 'rgba(255,225,70,0.95)';
+      ctx.lineWidth = Math.max(1, 1.5 * z);
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(tsx, tsy);
+      ctx.stroke();
+    }
+  },
+
+  drawCreature(cr) {
+    const ctx = this.ctx, z = this.cam.zoom;
+    const s = this.creatureSprite();
+    const [sx, sy] = this.worldToScreen(cr.x - 0.5, cr.y - 0.5);
+    ctx.drawImage(s, sx, sy, TILE * z, TILE * z);
+    if (cr.hp < SMOGLING_HP) {
+      const w = TILE * z * 0.8, h = Math.max(2, 2 * z * 0.6);
+      const bx = sx + (TILE * z - w) / 2, by = sy - 4 * z;
+      ctx.fillStyle = 'rgba(0,0,0,0.6)';
+      ctx.fillRect(bx - 1, by - 1, w + 2, h + 2);
+      ctx.fillStyle = '#c93f3f';
+      ctx.fillRect(bx, by, w * Math.max(0, cr.hp / SMOGLING_HP), h);
+    }
   },
 };

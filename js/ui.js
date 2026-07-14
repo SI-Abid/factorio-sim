@@ -12,6 +12,7 @@ const UI = {
   keys: {},
   dragPlacing: false,
   floats: [],              // floating "+1 Raw Iron" texts
+  flashes: [],             // red destroy-marker rings
 
   init() {
     const cv = Renderer.canvas;
@@ -35,6 +36,11 @@ const UI = {
     };
     for (const el of document.querySelectorAll('.panel-close')) {
       el.onclick = () => this.closePanel(el.dataset.close);
+    }
+    const peacefulCb = document.getElementById('peaceful-toggle');
+    if (peacefulCb) {
+      peacefulCb.checked = G.peaceful;
+      peacefulCb.onchange = () => { G.peaceful = peacefulCb.checked; };
     }
     setInterval(() => this.refreshOpenPanels(), 250);
   },
@@ -103,6 +109,7 @@ const UI = {
       if (this.buildSel) { this.cancelBuild(); return; }
       const ent = entityAt(tx, ty);
       if (ent) {
+        if (ent.type === 'den') { this.toast('Dens cannot be removed'); return; }
         if (this.openEnt === ent) this.closePanel('panel-entity');
         removeEntity(ent);
         this.toast(ENTITY_DEFS[ent.type].name + ' removed (refunded)');
@@ -119,7 +126,7 @@ const UI = {
       return;
     }
     const ent = entityAt(tx, ty);
-    if (ent) { this.openEntityPanel(ent); return; }
+    if (ent) { if (ent.type !== 'den') this.openEntityPanel(ent); return; }
     if (World.oreAt(tx, ty)) {
       G.handMine = { x: tx, y: ty, t: 0 };
     }
@@ -238,6 +245,10 @@ const UI = {
       el.classList.remove('hidden');
       if (id === 'panel-craft') this.renderCraftPanel();
       if (id === 'panel-tech') this.renderTechPanel();
+      if (id === 'panel-help') {
+        const cb = document.getElementById('peaceful-toggle');
+        if (cb) cb.checked = G.peaceful;
+      }
     }
   },
   closePanel(id) {
@@ -337,6 +348,15 @@ const UI = {
     document.getElementById('entity-title').textContent = ENTITY_DEFS[e.type].name;
     const body = document.getElementById('entity-body');
     let html = `<div class="ent-desc">${ENTITY_DEFS[e.type].desc}</div>`;
+    const maxHp = ENTITY_DEFS[e.type].hp;
+    if (maxHp !== undefined) {
+      const pct = Math.max(0, Math.min(100, (e.hp / maxHp) * 100));
+      const barCol = pct > 50 ? '#5fbf4a' : (pct > 25 ? '#e0a83a' : '#c93f3f');
+      html += `<div class="row">HP: ${Math.ceil(e.hp)}/${maxHp}
+        <span class="fuelbar"><span style="width:${pct}%;background:${barCol}"></span></span>
+        ${e.hp < maxHp ? `<button class="mini-btn" data-act="repair" ${canAfford(REPAIR_COST) ? '' : 'disabled'}>Repair (${REPAIR_COST['iron-ingot']} ${ITEMS['iron-ingot'].name})</button>` : ''}
+      </div>`;
+    }
     const fuelRow = () => `<div class="row">Fuel: ${this.iconImg('coal')} ×${e.fuelBuf}
       <span class="fuelbar"><span style="width:${Math.min(100, e.fuel / FUEL_PER_COAL * 100)}%"></span></span>
       <button class="mini-btn" data-act="fuel" ${invCount('coal') ? '' : 'disabled'}>+5 coal</button></div>`;
@@ -417,6 +437,16 @@ const UI = {
           <div class="row">Picks up from the ${DIR_NAMES[oppositeDir(e.dir)]} side, drops to the ${DIR_NAMES[e.dir]} side.</div>`;
         break;
       }
+      case 'turret': {
+        html += `<div class="row">Ammo: ${this.iconImg('bolt')} ×${e.ammo}/${TURRET_AMMO_CAP}
+          <button class="mini-btn" data-act="feedturret" ${invCount('bolt') ? '' : 'disabled'}>+5 bolts</button></div>`;
+        html += `<div class="row">Range ${TURRET_RANGE} tiles · Rate ${TURRET_RATE}/s · Damage ${TURRET_DAMAGE}</div>`;
+        break;
+      }
+      case 'wall': {
+        html += `<div class="row">A sturdy barrier that blocks movement.</div>`;
+        break;
+      }
     }
     body.innerHTML = html;
 
@@ -451,6 +481,21 @@ const UI = {
               invAdd(item, -1);
             }
             break;
+          case 'feedturret':
+            for (let i = 0; i < 5 && invCount('bolt') > 0; i++) {
+              if (!insertIntoEntity(e, 'bolt')) break;
+              invAdd('bolt', -1);
+            }
+            break;
+          case 'repair': {
+            const maxHp = ENTITY_DEFS[e.type].hp;
+            if (maxHp !== undefined && e.hp < maxHp && canAfford(REPAIR_COST)) {
+              payCosts(REPAIR_COST);
+              e.hp = maxHp;
+              this.toast('Repaired');
+            }
+            break;
+          }
         }
         this.renderEntityPanel();
         this.refreshToolbar();
@@ -511,7 +556,10 @@ const UI = {
     if (e.type === 'furnace' && e.outCount) text += `<br>out: ${e.outCount} ${ITEMS[e.outItem].name}`;
     if (e.type === 'chest') { let t2 = 0; for (const k in e.store) t2 += e.store[k]; text += `<br>${t2} items`; }
     if (e.type === 'crafter') text += `<br>${e.recipe ? 'making ' + ITEMS[RECIPE_BY_ID[e.recipe].out].name : 'no recipe set'}`;
-    text += '<br><i>click to open · right-click to remove</i>';
+    if (e.type === 'turret') text += `<br>ammo: ${e.ammo}/${TURRET_AMMO_CAP}`;
+    const maxHp = ENTITY_DEFS[e.type].hp;
+    if (maxHp !== undefined) text += `<br>HP: ${Math.ceil(e.hp)}/${maxHp}`;
+    text += e.type === 'den' ? '<br><i>a hostile creature den</i>' : '<br><i>click to open · right-click to remove</i>';
     tip.innerHTML = text;
     tip.classList.remove('hidden');
     tip.style.left = (cx + 16) + 'px';
@@ -548,5 +596,24 @@ const UI = {
       ctx.globalAlpha = 1;
     }
     this.floats = this.floats.filter(f => f.t > 0);
+  },
+
+  // Red flash ring marking a machine that a smogling just destroyed.
+  markDestroyed(x, y) {
+    this.flashes.push({ x, y, t: 1 });
+    if (this.flashes.length > 20) this.flashes.shift();
+  },
+  drawFlashes(dt) {
+    const ctx = Renderer.ctx, z = Renderer.cam.zoom;
+    for (const f of this.flashes) {
+      f.t -= dt * 1.4;
+      if (f.t <= 0) continue;
+      const [sx, sy] = Renderer.worldToScreen(f.x, f.y);
+      const rad = (6 + (1 - f.t) * 16) * z;
+      ctx.strokeStyle = `rgba(220,40,40,${Math.max(0, f.t)})`;
+      ctx.lineWidth = Math.max(2, 2 * z);
+      ctx.beginPath(); ctx.arc(sx, sy, rad, 0, Math.PI * 2); ctx.stroke();
+    }
+    this.flashes = this.flashes.filter(f => f.t > 0);
   },
 };

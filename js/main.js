@@ -22,6 +22,9 @@ const Main = {
     if (Renderer.ready) Renderer.redrawTerrain();
     G.inv = {};
     for (const k in STARTER_KIT) G.inv[k] = STARTER_KIT[k];
+    G.creatures = [];
+    G.peaceful = false;
+    spawnDens();
     Renderer.cam.x = WORLD_W * TILE / 2;
     Renderer.cam.y = WORLD_H * TILE / 2;
   },
@@ -39,6 +42,7 @@ const Main = {
     UI.updateGhost();
     Renderer.draw({ buildSel: UI.buildSel, ghost: UI.ghost, hoverEnt: UI.hoverEnt });
     UI.drawFloats(dt);
+    UI.drawFlashes(dt);
     requestAnimationFrame(t => this.frame(t));
   },
 
