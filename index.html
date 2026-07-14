@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BlockForge — a blocky factory automation game</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<!-- Top HUD -->
+<div id="hud-top">
+  <div id="research-hud" class="hud-box hidden">
+    <span id="research-name"></span>
+    <div class="bar"><div id="research-bar" class="bar-fill"></div></div>
+  </div>
+  <div id="hint" class="hud-box"></div>
+</div>
+
+<!-- Bottom hotbar -->
+<div id="toolbar">
+  <div id="build-buttons"></div>
+  <div class="toolbar-sep"></div>
+  <button class="tb-btn" id="btn-craft" title="Crafting (E)">Craft</button>
+  <button class="tb-btn" id="btn-tech" title="Research (T)">Tech</button>
+  <button class="tb-btn" id="btn-save" title="Save game">Save</button>
+  <button class="tb-btn" id="btn-load" title="Load game">Load</button>
+  <button class="tb-btn" id="btn-help" title="Help (H)">?</button>
+</div>
+
+<!-- Crafting panel -->
+<div id="panel-craft" class="panel hidden">
+  <div class="panel-title">Crafting <span class="panel-close" data-close="panel-craft">✕</span></div>
+  <div id="craft-list"></div>
+  <div class="panel-subtitle">Inventory</div>
+  <div id="inv-list" class="icon-grid"></div>
+</div>
+
+<!-- Tech panel -->
+<div id="panel-tech" class="panel hidden">
+  <div class="panel-title">Research <span class="panel-close" data-close="panel-tech">✕</span></div>
+  <div id="tech-list"></div>
+</div>
+
+<!-- Entity panel -->
+<div id="panel-entity" class="panel hidden">
+  <div class="panel-title"><span id="entity-title"></span> <span class="panel-close" data-close="panel-entity">✕</span></div>
+  <div id="entity-body"></div>
+</div>
+
+<!-- Help panel -->
+<div id="panel-help" class="panel hidden">
+  <div class="panel-title">How to play <span class="panel-close" data-close="panel-help">✕</span></div>
+  <div class="help-text">
+    <p><b>Goal:</b> automate everything and finish <i>Omega Research</i> to win.</p>
+    <p><b>Camera:</b> WASD / arrows / middle-drag to pan, mouse wheel to zoom.</p>
+    <p><b>Mine by hand:</b> click &amp; hold on an ore patch.</p>
+    <p><b>Build:</b> pick a machine from the hotbar (or keys 1–8), <b>R</b> to rotate,
+       click to place (drag to lay conveyors), <b>Q</b> or right-click to cancel.</p>
+    <p><b>Remove:</b> right-click a machine (items are refunded).</p>
+    <p><b>Machines:</b> click one to open it. Drills and furnaces burn <b>coal</b> —
+       feed them with grabber arms or by hand. Grabbers pick up from the tile behind
+       them and drop to the tile in front (the arrow shows the drop side).</p>
+    <p><b>Research:</b> craft Basic Tomes, feed them into a Study Table with a
+       grabber, then pick a technology in the Tech panel (<b>T</b>).</p>
+    <p><b>Panels:</b> <b>E</b> crafting, <b>T</b> research, <b>Esc</b> closes.</p>
+  </div>
+</div>
+
+<div id="toast"></div>
+<div id="tooltip" class="hidden"></div>
+<div id="victory" class="hidden">
+  <div class="victory-box">
+    <h1>Victory!</h1>
+    <p>You automated research itself. The forge must grow.</p>
+    <button id="btn-continue">Keep playing</button>
+  </div>
+</div>
+
+<script src="js/data.js"></script>
+<script src="js/world.js"></script>
+<script src="js/sim.js"></script>
+<script src="js/render.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
