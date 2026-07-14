@@ -20,6 +20,12 @@ const URL = 'file://' + path.resolve(__dirname, '..', 'index.html');
   // ---------- 1. rail graph pathing ----------
   const pathing = await page.evaluate(() => {
     localStorage.clear();
+    // Deterministic test terrain: worldgen dens and lakes can land on this test's
+    // fixed coordinates on some seeds, so clear them before building.
+    G.peaceful = true;
+    for (const e of [...G.entities.values()]) if (e.type === 'den') removeEntity(e);
+    if (G.creatures) G.creatures.length = 0;
+    if (World.water) World.water.fill(0);
     G.research.done['railways'] = true;
     G.inv['rail'] = 100;
     // a straight line of rails from (10,10) to (18,10)

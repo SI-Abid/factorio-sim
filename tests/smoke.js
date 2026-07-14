@@ -28,6 +28,12 @@ const URL = 'file://' + path.resolve(__dirname, '..', 'index.html');
   //    drill(E) -> conveyor -> conveyor -> grabber -> furnace -> grabber -> chest
   const result = await page.evaluate(() => {
     localStorage.clear();
+    // Deterministic test terrain: worldgen dens and lakes can land on this test's
+    // fixed coordinates on some seeds, so clear them before building.
+    G.peaceful = true;
+    for (const e of [...G.entities.values()]) if (e.type === 'den') removeEntity(e);
+    if (G.creatures) G.creatures.length = 0;
+    if (World.water) World.water.fill(0);
     const x = 20, y = 20;
     // paint a fresh iron patch under the drill
     for (let ty = y; ty < y + 2; ty++) for (let tx = x; tx < x + 2; tx++) {

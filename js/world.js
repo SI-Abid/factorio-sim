@@ -26,8 +26,53 @@ const World = {
   oreAmount: null,  // Int32Array
   water: null,      // Uint8Array, 1 = water tile (blocks building except the Pump's shore)
 
+  pollution: null,  // Float32Array, coarse pollution grid (POLLUTION_CELL tiles/cell)
+  pollW: 0,
+  pollH: 0,
+  denSpawns: [],    // [[x,y], ...] top-left of each 3x3 den footprint, set fresh by generate()
+
   inBounds(x, y) { return x >= 0 && y >= 0 && x < this.w && y < this.h; },
   idx(x, y) { return y * this.w + x; },
+
+  // ---------- pollution grid ----------
+  pollCellOf(tx, ty) { return [Math.floor(tx / POLLUTION_CELL), Math.floor(ty / POLLUTION_CELL)]; },
+  pollutionAt(tx, ty) {
+    if (!this.pollution) return 0;
+    const [cx, cy] = this.pollCellOf(tx, ty);
+    if (cx < 0 || cy < 0 || cx >= this.pollW || cy >= this.pollH) return 0;
+    return this.pollution[cy * this.pollW + cx];
+  },
+  addPollution(tx, ty, amount) {
+    if (!this.pollution) return;
+    const [cx, cy] = this.pollCellOf(tx, ty);
+    if (cx < 0 || cy < 0 || cx >= this.pollW || cy >= this.pollH) return;
+    const i = cy * this.pollW + cx;
+    this.pollution[i] = Math.min(POLLUTION_CAP, this.pollution[i] + amount);
+  },
+  // Decays every cell slightly and diffuses a small fraction to its neighbors.
+  updatePollution(dt) {
+    const src = this.pollution;
+    if (!src) return;
+    const w = this.pollW, h = this.pollH;
+    const decay = Math.max(0, 1 - POLLUTION_DECAY_RATE * dt);
+    for (let i = 0; i < src.length; i++) src[i] *= decay;
+    if (!this._pollTmp || this._pollTmp.length !== src.length) this._pollTmp = new Float32Array(src.length);
+    const tmp = this._pollTmp;
+    tmp.set(src);
+    const k = POLLUTION_DIFFUSE_RATE * dt;
+    for (let cy = 0; cy < h; cy++) {
+      for (let cx = 0; cx < w; cx++) {
+        const i = cy * w + cx;
+        let sum = 0, cnt = 0;
+        if (cx > 0) { sum += src[i - 1]; cnt++; }
+        if (cx < w - 1) { sum += src[i + 1]; cnt++; }
+        if (cy > 0) { sum += src[i - w]; cnt++; }
+        if (cy < h - 1) { sum += src[i + w]; cnt++; }
+        if (cnt > 0) tmp[i] += (sum / cnt - src[i]) * k;
+      }
+    }
+    src.set(tmp);
+  },
 
   oreAt(x, y) {
     if (!this.inBounds(x, y)) return 0;
@@ -122,6 +167,27 @@ const World = {
       const py = Math.round(cy + Math.sin(ang) * dist);
       if (px < 5 || py < 5 || px > this.w - 5 || py > this.h - 5) continue;
       lakeBlob(px, py, 4 + rng() * 5);
+    }
+
+    // pollution grid, reset fresh each generation
+    this.pollW = Math.ceil(this.w / POLLUTION_CELL);
+    this.pollH = Math.ceil(this.h / POLLUTION_CELL);
+    this.pollution = new Float32Array(this.pollW * this.pollH);
+    this._pollTmp = null;
+
+    // Creature den locations: scattered far from the center, spread apart from each other.
+    this.denSpawns = [];
+    let guard = 0;
+    while (this.denSpawns.length < DEN_COUNT && guard < 4000) {
+      guard++;
+      const ang = rng() * Math.PI * 2;
+      const dist = DEN_MIN_DIST + rng() * (Math.min(this.w, this.h) * 0.45);
+      const px = Math.round(cx + Math.cos(ang) * dist);
+      const py = Math.round(cy + Math.sin(ang) * dist);
+      if (px < 1 || py < 1 || px > this.w - 4 || py > this.h - 4) continue;
+      let ok = true;
+      for (const [ox, oy] of this.denSpawns) if (Math.hypot(px - ox, py - oy) < 20) { ok = false; break; }
+      if (ok) this.denSpawns.push([px, py]);
     }
   },
 };

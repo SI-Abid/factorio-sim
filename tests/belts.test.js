@@ -19,6 +19,12 @@ const URL = 'file://' + path.resolve(__dirname, '..', 'index.html');
   // Common setup: unlock logistics tech (splitter/tunnel-belt) and stock the inventory.
   await page.evaluate(() => {
     localStorage.clear();
+    // Deterministic test terrain: worldgen dens and lakes can land on this test's
+    // fixed coordinates on some seeds, so clear them before building.
+    G.peaceful = true;
+    for (const e of [...G.entities.values()]) if (e.type === 'den') removeEntity(e);
+    if (G.creatures) G.creatures.length = 0;
+    if (World.water) World.water.fill(0);
     G.research.done['logistics'] = true;
     G.inv['conveyor'] = 50;
     G.inv['splitter'] = 10;
