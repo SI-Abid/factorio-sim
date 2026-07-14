@@ -14,7 +14,9 @@ scratch in vanilla JavaScript + Canvas: no frameworks, no build step, no assets 
 
 ## Play
 
-No install needed:
+**▶ Play it live: <https://si-abid.github.io/factorio-sim/>**
+
+Or run it locally — no install needed:
 
 ```sh
 # open directly…
