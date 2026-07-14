@@ -14,6 +14,7 @@ const G = {
   stats: { mined: 0, smelted: 0, crafted: 0, placed: {} },
   victory: false,
   victoryShown: false,
+  powerGrid: null,       // last tick's { poles, poleRoot, networks } — derived, never serialized
 };
 
 function keyXY(x, y) { return x + ',' + y; }
@@ -52,7 +53,7 @@ function canPlace(type, x, y) {
     if (!World.inBounds(tx, ty)) return false;
     if (entityAt(tx, ty)) return false;
   }
-  if (type === 'drill') {
+  if (type === 'drill' || type === 'volt-drill') {
     let ore = false;
     for (const [tx, ty] of tilesOf(type, x, y)) if (World.oreAt(tx, ty)) ore = true;
     if (!ore) return false;
@@ -78,6 +79,12 @@ function makeEntity(type, x, y, dir) {
       e.recipe = null; e.input = {}; e.output = {}; e.progress = 0; e.active = false; break;
     case 'study':
       e.packs = { tome1: 0, tome2: 0 }; e.progress = 0; break;
+    case 'generator':
+      e.fuel = 0; e.fuelBuf = 0; e.active = false; e.powered = false; break;
+    case 'pylon':
+      break; // purely passive; coverage is computed fresh each tick
+    case 'volt-drill':
+      e.progress = 0; e.outBuf = []; e.active = false; e.powered = false; break;
   }
   return e;
 }
@@ -145,6 +152,10 @@ function insertIntoEntity(e, item) {
       if (item === 'coal' && e.fuelBuf < 5) { e.fuelBuf++; return true; }
       return false;
     }
+    case 'generator': {
+      if (item === 'coal' && e.fuelBuf < 5) { e.fuelBuf++; return true; }
+      return false;
+    }
     case 'crafter': {
       if (!e.recipe) return false;
       const r = RECIPE_BY_ID[e.recipe];
@@ -178,6 +189,9 @@ function extractFromEntity(e) {
       if (e.outCount > 0) { e.outCount--; const it = e.outItem; if (!e.outCount) e.outItem = null; return it; }
       return null;
     case 'drill':
+      if (e.outBuf.length) return e.outBuf.shift();
+      return null;
+    case 'volt-drill':
       if (e.outBuf.length) return e.outBuf.shift();
       return null;
     case 'crafter':
@@ -250,20 +264,24 @@ function burnFuel(e, dt) {
   return true;
 }
 
-function updateDrill(e, dt) {
-  e.active = false;
-  // eject buffered output first
-  if (e.outBuf.length) {
-    const [ox, oy] = drillOutputTile(e);
-    const target = entityAt(ox, oy);
-    if (target) {
-      if (isBelt(target)) {
-        if (beltAddItem(target, e.outBuf[0], 0.5)) e.outBuf.shift();
-      } else if (insertIntoEntity(target, e.outBuf[0])) {
-        e.outBuf.shift();
-      }
+// Push a drill-like entity's buffered output onto whatever sits at its output tile.
+// Shared by the coal Auto-Drill and the electric Volt Drill (same 2x2 output geometry).
+function ejectDrillOutput(e) {
+  if (!e.outBuf.length) return;
+  const [ox, oy] = drillOutputTile(e);
+  const target = entityAt(ox, oy);
+  if (target) {
+    if (isBelt(target)) {
+      if (beltAddItem(target, e.outBuf[0], 0.5)) e.outBuf.shift();
+    } else if (insertIntoEntity(target, e.outBuf[0])) {
+      e.outBuf.shift();
     }
   }
+}
+
+function updateDrill(e, dt) {
+  e.active = false;
+  ejectDrillOutput(e);
   if (e.outBuf.length >= 3) return; // stalled until output drains
 
   // find an ore tile under the drill
@@ -281,6 +299,116 @@ function updateDrill(e, dt) {
     const item = World.mineTile(oreTile[0], oreTile[1]);
     if (item) { e.outBuf.push(item); G.stats.mined++; }
   }
+}
+
+// ---------- electricity ----------
+//
+// The power grid (which pylons form a network, and each network's supply/demand)
+// is recomputed from scratch every tick — it is derived state, never stored in a
+// save file. Entities only carry plain, serializable fields (fuelBuf, outBuf,
+// active, powered, ...) exactly like the existing fueled machines.
+
+// Group pylons into networks: two pylons within POLE_LINK_RADIUS (Chebyshev) join
+// the same network (union-find). Returns { poles, poleRoot, networks }.
+function buildPowerGrid() {
+  const poles = [];
+  for (const e of G.entities.values()) if (e.type === 'pylon') poles.push(e);
+  const n = poles.length;
+  const parent = new Array(n);
+  for (let i = 0; i < n; i++) parent[i] = i;
+  function find(i) { while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; } return i; }
+  function union(a, b) { a = find(a); b = find(b); if (a !== b) parent[a] = b; }
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      const dx = Math.abs(poles[i].x - poles[j].x), dy = Math.abs(poles[i].y - poles[j].y);
+      if (Math.max(dx, dy) <= POLE_LINK_RADIUS) union(i, j);
+    }
+  }
+  const networks = new Map();  // root -> { supply, demand, satisfaction, poleCount }
+  const poleRoot = new Map();  // pylon entity id -> root
+  for (let i = 0; i < n; i++) {
+    const r = find(i);
+    if (!networks.has(r)) networks.set(r, { supply: 0, demand: 0, satisfaction: 1, poleCount: 0 });
+    networks.get(r).poleCount++;
+    poleRoot.set(poles[i].id, r);
+  }
+  return { poles, poleRoot, networks };
+}
+
+// The network (root key) covering any of `tiles`, or null if none of the grid's
+// pylons reach within POLE_RADIUS of them.
+function networkCovering(grid, tiles) {
+  for (const [tx, ty] of tiles) {
+    for (const p of grid.poles) {
+      if (Math.max(Math.abs(p.x - tx), Math.abs(p.y - ty)) <= POLE_RADIUS) return grid.poleRoot.get(p.id);
+    }
+  }
+  return null;
+}
+
+// Supply/demand/satisfaction for whichever network covers entity `e` (generator,
+// pylon, or volt-drill), as of the most recently simulated tick. Returns null if
+// it isn't connected to any pylon (or no tick has run yet). Read-only: does not
+// touch fuel/progress, so it's safe to call as often as the UI likes.
+function powerNetworkInfo(e) {
+  const grid = G.powerGrid;
+  if (!grid) return null;
+  const root = e.type === 'pylon' ? grid.poleRoot.get(e.id) : networkCovering(grid, tilesOf(e.type, e.x, e.y));
+  if (root === undefined || root === null) return null;
+  return grid.networks.get(root);
+}
+
+// Runs before the regular per-type dispatch: tallies generator supply and
+// volt-drill demand per network, then applies mining progress at the resulting
+// satisfaction (supply / demand, clamped to 1).
+function updatePowerGrid(dt) {
+  const grid = buildPowerGrid();
+
+  for (const e of G.entities.values()) {
+    if (e.type !== 'generator') continue;
+    e.active = false;
+    const root = networkCovering(grid, tilesOf('generator', e.x, e.y));
+    e.powered = root !== null;
+    if (root === null) continue;
+    if (!burnFuel(e, dt)) continue;
+    e.active = true;
+    grid.networks.get(root).supply += GEN_POWER_KW;
+  }
+
+  const pending = [];
+  for (const e of G.entities.values()) {
+    if (e.type !== 'volt-drill') continue;
+    e.active = false;
+    ejectDrillOutput(e);
+    const root = networkCovering(grid, tilesOf('volt-drill', e.x, e.y));
+    e.powered = root !== null;
+    if (e.outBuf.length >= 3) continue; // stalled until output drains
+    let oreTile = null;
+    for (const [tx, ty] of tilesOf('volt-drill', e.x, e.y)) {
+      if (World.oreAt(tx, ty)) { oreTile = [tx, ty]; break; }
+    }
+    if (!oreTile || root === null) continue;
+    grid.networks.get(root).demand += VOLT_DRILL_KW;
+    pending.push({ e, root, oreTile });
+  }
+
+  for (const net of grid.networks.values()) {
+    net.satisfaction = net.demand > 0 ? Math.min(1, net.supply / net.demand) : 1;
+  }
+
+  for (const { e, root, oreTile } of pending) {
+    const sat = grid.networks.get(root).satisfaction;
+    if (sat <= 0) continue;
+    e.active = true;
+    e.progress += dt * sat * VOLT_DRILL_SPEED_MULT / DRILL_OP_TIME;
+    if (e.progress >= 1) {
+      e.progress = 0;
+      const item = World.mineTile(oreTile[0], oreTile[1]);
+      if (item) { e.outBuf.push(item); G.stats.mined++; }
+    }
+  }
+
+  G.powerGrid = grid; // cache for UI queries (powerNetworkInfo); rebuilt fresh next tick
 }
 
 function updateFurnace(e, dt) {
@@ -441,6 +569,7 @@ function simTick(dt) {
   G.time += dt;
   updateHandMine(dt);
   updateCraftQueue(dt);
+  updatePowerGrid(dt);
   for (const e of G.entities.values()) {
     switch (e.type) {
       case 'conveyor': case 'fast-conveyor': updateBelt(e, dt); break;

@@ -67,6 +67,8 @@ Progress autosaves to `localStorage` every minute (plus manual Save/Load buttons
 - **Crafters** with selectable recipes, input/output buffers, and ingredient limits
 - **Research** — study tables consume tomes to progress a shared tech tree that
   unlocks recipes, buildings, and speed multipliers
+- **Electricity** — Coal Generators feed Power Pylon networks (grouped by proximity each tick);
+  Volt Drills draw power instead of fuel and slow down proportionally when the grid is undersupplied
 - **Hand crafting** with a queue, plus a guided hint line for new players
 
 ## Code layout
@@ -82,8 +84,8 @@ Progress autosaves to `localStorage` every minute (plus manual Save/Load buttons
 
 ## Roadmap ideas
 
-Power grids, fluids & pipes, trains, enemies/defense, blueprints, a minimap,
-two-lane belts, splitters, and modded recipes are all natural next steps.
+Fluids & pipes, trains, enemies/defense, blueprints, a minimap, two-lane belts,
+splitters, and modded recipes are all natural next steps.
 
 ## Development
 

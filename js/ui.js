@@ -324,6 +324,14 @@ const UI = {
     }
   },
 
+  // Shared "Network: N kW supply / N kW demand (X%)" row for pylons/generators/volt-drills.
+  networkRow(e) {
+    const info = powerNetworkInfo(e);
+    if (!info) return `<div class="row">Grid: not part of any network.</div>`;
+    return `<div class="row">Grid: ${info.poleCount} pylon${info.poleCount === 1 ? '' : 's'} ·
+      ${info.supply} kW supply / ${info.demand} kW demand (${Math.round(info.satisfaction * 100)}%)</div>`;
+  },
+
   openEntityPanel(ent) {
     this.closeAllPanels();
     this.openEnt = ent;
@@ -415,6 +423,29 @@ const UI = {
       case 'grabber': {
         html += `<div class="row">Holding: ${e.hold ? this.iconImg(e.hold) : '<i>nothing</i>'}</div>
           <div class="row">Picks up from the ${DIR_NAMES[oppositeDir(e.dir)]} side, drops to the ${DIR_NAMES[e.dir]} side.</div>`;
+        break;
+      }
+      case 'generator': {
+        html += fuelRow();
+        const status = e.active ? 'generating' : (!e.powered ? 'not connected to a pylon' : 'idle (no fuel)');
+        html += `<div class="row">Status: ${status}</div>`;
+        html += this.networkRow(e);
+        break;
+      }
+      case 'pylon': {
+        html += `<div class="row">Covers a ${POLE_RADIUS}-tile radius; links with pylons within ${POLE_LINK_RADIUS} tiles.</div>`;
+        html += this.networkRow(e);
+        break;
+      }
+      case 'volt-drill': {
+        html += `<div class="row">Output buffer: ${e.outBuf.map(i => this.iconImg(i)).join('') || '<i>empty</i>'}
+          ${e.outBuf.length ? '<button class="mini-btn" data-act="takeout">Take</button>' : ''}</div>`;
+        let status;
+        if (!e.powered) status = 'not connected to a pylon';
+        else if (e.active) status = 'mining';
+        else status = 'idle (output blocked, out of ore, or no power)';
+        html += `<div class="row">Status: ${status}</div>`;
+        html += this.networkRow(e);
         break;
       }
     }
@@ -511,6 +542,12 @@ const UI = {
     if (e.type === 'furnace' && e.outCount) text += `<br>out: ${e.outCount} ${ITEMS[e.outItem].name}`;
     if (e.type === 'chest') { let t2 = 0; for (const k in e.store) t2 += e.store[k]; text += `<br>${t2} items`; }
     if (e.type === 'crafter') text += `<br>${e.recipe ? 'making ' + ITEMS[RECIPE_BY_ID[e.recipe].out].name : 'no recipe set'}`;
+    if (e.type === 'generator') text += `<br>fuel: ${e.fuelBuf} coal${e.active ? ' · generating' : ''}${e.powered ? '' : ' · no pylon'}`;
+    if (e.type === 'volt-drill') text += `<br>${!e.powered ? 'no power' : (e.active ? 'mining' : 'idle')}`;
+    if (e.type === 'pylon') {
+      const info = powerNetworkInfo(e);
+      text += info ? `<br>grid: ${Math.round(info.satisfaction * 100)}% supplied` : '<br>isolated (no generator nearby)';
+    }
     text += '<br><i>click to open · right-click to remove</i>';
     tip.innerHTML = text;
     tip.classList.remove('hidden');
