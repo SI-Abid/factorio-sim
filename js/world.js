@@ -24,6 +24,7 @@ const World = {
   h: WORLD_H,
   oreType: null,    // Uint8Array, ORE_NONE or index into ORES
   oreAmount: null,  // Int32Array
+  water: null,      // Uint8Array, 1 = water tile (blocks building except the Pump's shore)
 
   inBounds(x, y) { return x >= 0 && y >= 0 && x < this.w && y < this.h; },
   idx(x, y) { return y * this.w + x; },
@@ -35,6 +36,10 @@ const World = {
   oreAmountAt(x, y) {
     if (!this.inBounds(x, y)) return 0;
     return this.oreAmount[this.idx(x, y)];
+  },
+  isWater(x, y) {
+    if (!this.inBounds(x, y)) return false;
+    return this.water[this.idx(x, y)] === 1;
   },
 
   // Remove 1 ore from tile; returns the item id mined or null.
@@ -58,6 +63,7 @@ const World = {
     this.seed = seed;
     this.oreType = new Uint8Array(this.w * this.h);
     this.oreAmount = new Int32Array(this.w * this.h);
+    this.water = new Uint8Array(this.w * this.h);
     const rng = makeRng(seed);
 
     const blob = (cx, cy, r, type, richness) => {
@@ -91,6 +97,31 @@ const World = {
       const py = Math.round(cy + Math.sin(ang) * dist);
       if (px < 6 || py < 6 || px > this.w - 6 || py > this.h - 6) continue;
       blob(px, py, 4 + rng() * 5, type, 110 + rng() * 120);
+    }
+
+    // A handful of irregular seeded lakes. They never overwrite ore tiles, so
+    // ore and water stay mutually exclusive.
+    const lakeBlob = (lcx, lcy, r) => {
+      const r2 = Math.ceil(r + 2);
+      for (let y = Math.max(0, lcy - r2); y <= Math.min(this.h - 1, lcy + r2); y++) {
+        for (let x = Math.max(0, lcx - r2); x <= Math.min(this.w - 1, lcx + r2); x++) {
+          const d = Math.hypot(x - lcx, y - lcy);
+          const wobble = (tileHash(x, y, seed ^ 0x5133) - 0.5) * 2.2;
+          if (d + wobble < r) {
+            const i = this.idx(x, y);
+            if (this.oreType[i] === ORE_NONE) this.water[i] = 1;
+          }
+        }
+      }
+    };
+    const LAKE_COUNT = 6;
+    for (let n = 0; n < LAKE_COUNT; n++) {
+      const ang = rng() * Math.PI * 2;
+      const dist = 18 + rng() * (this.w * 0.45);
+      const px = Math.round(cx + Math.cos(ang) * dist);
+      const py = Math.round(cy + Math.sin(ang) * dist);
+      if (px < 5 || py < 5 || px > this.w - 5 || py > this.h - 5) continue;
+      lakeBlob(px, py, 4 + rng() * 5);
     }
   },
 };

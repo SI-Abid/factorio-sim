@@ -417,6 +417,54 @@ const UI = {
           <div class="row">Picks up from the ${DIR_NAMES[oppositeDir(e.dir)]} side, drops to the ${DIR_NAMES[e.dir]} side.</div>`;
         break;
       }
+      case 'pump': {
+        const net = adjacentFluidNets(e)[0] || null;
+        html += `<div class="row">Status: ${e.active ? 'pumping water' : 'idle (needs an adjacent pipe with room for water)'}</div>`;
+        html += net
+          ? `<div class="row">Connected network: ${this.iconImg('water')} ${net.fluid ? Math.round(net.amount) + '/' + net.cap : 'empty/' + net.cap}</div>`
+          : `<div class="row"><i>not connected to any pipe</i></div>`;
+        html += `<div class="row">Draws water from the shore at ${PUMP_RATE}/s.</div>`;
+        break;
+      }
+      case 'pipe': {
+        const net = fluidNetFor(e);
+        if (net && net.fluid) {
+          const pct = net.cap ? Math.round(net.amount / net.cap * 100) : 0;
+          html += `<div class="row">${this.iconImg(net.fluid)} ${ITEMS[net.fluid].name} — ${Math.round(net.amount)}/${net.cap}
+            (${net.members.length} pipe${net.members.length > 1 ? 's' : ''})</div>`;
+          html += `<div class="row"><span class="fuelbar"><span style="width:${pct}%"></span></span></div>`;
+        } else {
+          html += `<div class="row"><i>empty</i></div>`;
+        }
+        break;
+      }
+      case 'boiler': {
+        html += fuelRow();
+        const nets = adjacentFluidNets(e);
+        const inNet = nets.find(n => n.fluid === 'water');
+        const outNet = nets.find(n => n !== inNet && (n.fluid === 'steam' || n.fluid === null));
+        html += `<div class="row">Water in: ${inNet ? Math.round(inNet.amount) + '/' + inNet.cap : '<i>not connected</i>'}</div>`;
+        html += `<div class="row">Steam out: ${outNet ? Math.round(outNet.amount) + '/' + outNet.cap : '<i>not connected</i>'}</div>`;
+        html += `<div class="row">Status: ${e.active ? 'boiling' : 'idle'}</div>`;
+        break;
+      }
+      case 'steel-forge': {
+        const need = STEEL_RECIPE.in;
+        html += `<div class="row">Input: `;
+        for (const k in need) {
+          html += `<span class="ing">${this.iconImg(k)}${e.input[k] || 0}/${need[k]}</span>
+            <button class="mini-btn" data-act="feedforge" data-item="${k}" ${invCount(k) ? '' : 'disabled'}>+5</button> `;
+        }
+        html += `</div>`;
+        const steamNet = adjacentFluidNets(e).find(n => n.fluid === 'steam');
+        html += `<div class="row">Steam: ${steamNet ? Math.round(steamNet.amount) + '/' + steamNet.cap : '<i>not connected</i>'}
+          (uses ${FORGE_STEAM_RATE}/s while working)</div>`;
+        html += `<div class="row">Progress: <span class="fuelbar"><span style="width:${e.progress * 100}%"></span></span></div>`;
+        const outN = e.output[STEEL_RECIPE.out] || 0;
+        html += `<div class="row">Output: ${this.iconImg(STEEL_RECIPE.out)} ×${outN}
+          ${outN ? '<button class="mini-btn" data-act="takeout">Take</button>' : ''}</div>`;
+        break;
+      }
     }
     body.innerHTML = html;
 
@@ -435,7 +483,7 @@ const UI = {
               invAdd(item, -1);
             }
             break;
-          case 'feedcrafter': case 'feedstudy':
+          case 'feedcrafter': case 'feedstudy': case 'feedforge':
             for (let i = 0; i < 5 && invCount(item) > 0; i++) {
               if (!insertIntoEntity(e, item)) break;
               invAdd(item, -1);
@@ -511,6 +559,13 @@ const UI = {
     if (e.type === 'furnace' && e.outCount) text += `<br>out: ${e.outCount} ${ITEMS[e.outItem].name}`;
     if (e.type === 'chest') { let t2 = 0; for (const k in e.store) t2 += e.store[k]; text += `<br>${t2} items`; }
     if (e.type === 'crafter') text += `<br>${e.recipe ? 'making ' + ITEMS[RECIPE_BY_ID[e.recipe].out].name : 'no recipe set'}`;
+    if (e.type === 'boiler') text += `<br>fuel: ${e.fuelBuf} coal${e.active ? ' · boiling' : ''}`;
+    if (e.type === 'pump') text += e.active ? '<br>pumping water' : '<br>idle';
+    if (e.type === 'pipe') {
+      const net = fluidNetFor(e);
+      text += net && net.fluid ? `<br>${Math.round(net.amount)}/${net.cap} ${ITEMS[net.fluid].name}` : '<br>empty';
+    }
+    if (e.type === 'steel-forge') text += `<br>${e.active ? 'forging steel' : 'idle'} · out: ${e.output['steel-ingot'] || 0}`;
     text += '<br><i>click to open · right-click to remove</i>';
     tip.innerHTML = text;
     tip.classList.remove('hidden');

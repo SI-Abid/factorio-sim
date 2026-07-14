@@ -43,6 +43,14 @@ const ITEMS = {
   'furnace':       { name: 'Furnace',        kind: 'machine', color: '#8f8f8f' },
   'crafter':       { name: 'Crafter',        kind: 'machine', color: '#5f8fb0' },
   'study':         { name: 'Study Table',    kind: 'machine', color: '#7a4fc9' },
+  'steel-ingot':   { name: 'Steel Ingot',    kind: 'ingot',   color: '#b9c6d6', color2: '#7f8fa3' },
+  'steel-gear':    { name: 'Steel Gear',     kind: 'gear',    color: '#b9c6d6', color2: '#7f8fa3' },
+  'water':         { name: 'Water',         kind: 'fluid',   color: '#3a82c9', color2: '#2f6fb0' },
+  'steam':         { name: 'Steam',         kind: 'fluid',   color: '#e7edf2', color2: '#c3ccd6' },
+  'pump':          { name: 'Pump',          kind: 'machine', color: '#3a6fa0' },
+  'pipe':          { name: 'Pipe',          kind: 'machine', color: '#7d8891' },
+  'boiler':        { name: 'Boiler',        kind: 'machine', color: '#8a5a3a' },
+  'steel-forge':   { name: 'Steel Forge',   kind: 'machine', color: '#9aa8bd' },
 };
 
 // Recipes.
@@ -65,6 +73,11 @@ const RECIPES = [
   { id: 'furnace',       out: 'furnace',       n: 1, time: 2, in: { 'stone': 8 },                       station: 'craft' },
   { id: 'crafter',       out: 'crafter',       n: 1, time: 4, in: { 'iron-ingot': 9, 'gear': 3, 'circuit': 3 }, station: 'craft', tech: 'automation' },
   { id: 'study',         out: 'study',         n: 1, time: 4, in: { 'stone-brick': 10, 'circuit': 5, 'gear': 5 }, station: 'craft' },
+  { id: 'pump',          out: 'pump',          n: 1, time: 2, in: { 'iron-ingot': 3, 'gear': 2, 'circuit': 1 }, station: 'craft', tech: 'plumbing' },
+  { id: 'pipe',          out: 'pipe',          n: 2, time: 1, in: { 'iron-ingot': 1 },                       station: 'craft', tech: 'plumbing' },
+  { id: 'boiler',        out: 'boiler',        n: 1, time: 3, in: { 'stone': 8, 'iron-ingot': 4 },           station: 'craft', tech: 'plumbing' },
+  { id: 'steel-forge',   out: 'steel-forge',   n: 1, time: 4, in: { 'stone-brick': 10, 'iron-ingot': 8, 'gear': 4 }, station: 'craft', tech: 'steelworks' },
+  { id: 'steel-gear',    out: 'steel-gear',    n: 1, time: 2, in: { 'steel-ingot': 1 },                      station: 'craft', tech: 'steelworks' },
 ];
 const RECIPE_BY_ID = {};
 for (const r of RECIPES) RECIPE_BY_ID[r.id] = r;
@@ -85,6 +98,10 @@ const TECHS = [
     desc: 'Unlocks Fast Conveyors (2× belt speed).' },
   { id: 'adv-tomes',      name: 'Advanced Tomes',    units: 20, packs: ['tome1'], req: [],
     desc: 'Unlocks crafting of Advanced Tomes.' },
+  { id: 'plumbing',       name: 'Plumbing',          units: 15, packs: ['tome1'], req: ['automation'],
+    desc: 'Unlocks the Pump, Pipe, and Boiler for fluid-powered production.' },
+  { id: 'steelworks',     name: 'Steelworks',        units: 20, packs: ['tome1', 'tome2'], req: ['plumbing', 'adv-tomes'],
+    desc: 'Unlocks the Steel Forge and steel-based recipes.' },
   { id: 'efficiency',     name: 'Efficient Drilling', units: 20, packs: ['tome1', 'tome2'], req: ['adv-tomes'],
     desc: 'Auto-Drills mine 50% faster.' },
   { id: 'adv-automation', name: 'Mass Production',   units: 20, packs: ['tome1', 'tome2'], req: ['automation', 'adv-tomes'],
@@ -114,6 +131,14 @@ const ENTITY_DEFS = {
     desc: 'Consumes tomes to research technology.' },
   'fast-conveyor': { name: 'Fast Conveyor', w: 1, h: 1, rot: true, speed: 3, tech: 'logistics',
     desc: 'Moves items twice as fast.' },
+  'pump':          { name: 'Pump',          w: 1, h: 1, rot: true, tech: 'plumbing',
+    desc: 'Place on land at the shoreline, adjacent to water. Pumps water into any pipe it touches.' },
+  'pipe':          { name: 'Pipe',          w: 1, h: 1, rot: false, tech: 'plumbing',
+    desc: 'Carries one fluid at a time. Connects to adjacent pipes, pumps, boilers, and forges.' },
+  'boiler':        { name: 'Boiler',        w: 2, h: 2, rot: false, tech: 'plumbing',
+    desc: 'Burns coal to turn water from one adjacent pipe network into steam in another.' },
+  'steel-forge':   { name: 'Steel Forge',   w: 3, h: 3, rot: false, tech: 'steelworks',
+    desc: 'Uses steam plus iron ingots and coal to forge steel ingots.' },
 };
 const BUILDABLE = Object.keys(ENTITY_DEFS);
 
@@ -126,6 +151,14 @@ const BURN_RATE = 2;         // energy units per second while working
 const STUDY_CYCLE = 2;       // seconds per research unit per study table
 const CHEST_CAP = 300;
 const HAND_MINE_TIME = 0.4;  // seconds per hand-mined ore
+
+// ---------- fluids ----------
+const PIPE_CAP = 20;         // fluid units of capacity contributed by each pipe segment
+const PUMP_RATE = 10;        // water/sec a pump adds to the network it touches
+const BOILER_FLOW = 6;       // water consumed & steam produced per second while a boiler burns fuel (1:1)
+const FORGE_STEAM_RATE = 2;  // steam/sec consumed by a working Steel Forge
+// Steel Forge's fixed internal recipe (not player-selectable, unlike Crafter recipes).
+const STEEL_RECIPE = { in: { 'iron-ingot': 2, 'coal': 1 }, out: 'steel-ingot', n: 1, time: 6 };
 
 const STARTER_KIT = {
   'drill': 2, 'furnace': 4, 'conveyor': 30, 'grabber': 6, 'chest': 4,

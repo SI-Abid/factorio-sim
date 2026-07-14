@@ -14,6 +14,8 @@ const G = {
   stats: { mined: 0, smelted: 0, crafted: 0, placed: {} },
   victory: false,
   victoryShown: false,
+  fluidNets: [],         // this tick's fluid networks (transient, not saved)
+  fluidNetOf: null,      // Map: pipe entity id -> its network (transient, not saved)
 };
 
 function keyXY(x, y) { return x + ',' + y; }
@@ -51,11 +53,20 @@ function canPlace(type, x, y) {
   for (const [tx, ty] of tilesOf(type, x, y)) {
     if (!World.inBounds(tx, ty)) return false;
     if (entityAt(tx, ty)) return false;
+    if (World.isWater(tx, ty)) return false; // water blocks all building, including the Pump itself
   }
   if (type === 'drill') {
     let ore = false;
     for (const [tx, ty] of tilesOf(type, x, y)) if (World.oreAt(tx, ty)) ore = true;
     if (!ore) return false;
+  }
+  if (type === 'pump') {
+    // Pumps sit on the shore (dry land) but must touch at least one water tile.
+    let adjWater = false;
+    for (const [tx, ty] of tilesOf(type, x, y)) {
+      for (let dd = 0; dd < 4; dd++) if (World.isWater(tx + DX[dd], ty + DY[dd])) adjWater = true;
+    }
+    if (!adjWater) return false;
   }
   return true;
 }
@@ -78,6 +89,14 @@ function makeEntity(type, x, y, dir) {
       e.recipe = null; e.input = {}; e.output = {}; e.progress = 0; e.active = false; break;
     case 'study':
       e.packs = { tome1: 0, tome2: 0 }; e.progress = 0; break;
+    case 'pump':
+      e.active = false; break;
+    case 'pipe':
+      e.fluid = null; e.amount = 0; break;                // this segment's share of its network's reservoir
+    case 'boiler':
+      e.fuel = 0; e.fuelBuf = 0; e.active = false; break;
+    case 'steel-forge':
+      e.input = {}; e.output = {}; e.progress = 0; e.active = false; break;
   }
   return e;
 }
@@ -95,6 +114,7 @@ function placeEntity(type, x, y, dir) {
 }
 
 // Remove entity, refunding it and its contents to the player.
+// Note: fluids (pipe/network contents) are not inventory items and are simply lost.
 function removeEntity(e) {
   G.entities.delete(e.id);
   for (const [tx, ty] of tilesOf(e.type, e.x, e.y)) G.byTile.delete(keyXY(tx, ty));
@@ -141,7 +161,7 @@ function insertIntoEntity(e, item) {
       }
       return false;
     }
-    case 'drill': {
+    case 'drill': case 'boiler': {
       if (item === 'coal' && e.fuelBuf < 5) { e.fuelBuf++; return true; }
       return false;
     }
@@ -149,6 +169,14 @@ function insertIntoEntity(e, item) {
       if (!e.recipe) return false;
       const r = RECIPE_BY_ID[e.recipe];
       const need = r.in[item];
+      if (need === undefined) return false;
+      const have = e.input[item] || 0;
+      if (have >= need * 3) return false;
+      e.input[item] = have + 1;
+      return true;
+    }
+    case 'steel-forge': {
+      const need = STEEL_RECIPE.in[item];
       if (need === undefined) return false;
       const have = e.input[item] || 0;
       if (have >= need * 3) return false;
@@ -180,7 +208,7 @@ function extractFromEntity(e) {
     case 'drill':
       if (e.outBuf.length) return e.outBuf.shift();
       return null;
-    case 'crafter':
+    case 'crafter': case 'steel-forge':
       for (const k in e.output) {
         if (e.output[k] > 0) { e.output[k]--; if (!e.output[k]) delete e.output[k]; return k; }
       }
@@ -391,6 +419,136 @@ function startResearch(id) {
   return true;
 }
 
+// ---------- fluids ----------
+//
+// Network model: every tick, connected `pipe` entities are flood-filled into
+// "networks" (plain objects, not stored on entities to avoid circular refs).
+// Each network is one shared reservoir: a single fluid type (or none) and a
+// total amount capped at PIPE_CAP * (number of member pipes). Pumps, boilers,
+// and the Steel Forge don't join a network themselves — each tick they look
+// at the networks touching their footprint (via `adjacentFluidNets`) and
+// push/pull fluid directly on that network object. After all machines run,
+// `redistributeNetworks` splits each network's totals back out evenly onto
+// its member pipes so state persists (and saves) per-pipe, tile by tile.
+// Mixing is prevented structurally: producers only ever write into a network
+// whose fluid is already their own type, or which is still empty.
+
+function computeFluidNetworks() {
+  const seen = new Set();
+  const nets = [];
+  const netOf = new Map(); // pipe entity id -> its network
+  for (const e of G.entities.values()) {
+    if (e.type !== 'pipe' || seen.has(e.id)) continue;
+    const members = [];
+    const stack = [e];
+    seen.add(e.id);
+    while (stack.length) {
+      const p = stack.pop();
+      members.push(p);
+      for (let d = 0; d < 4; d++) {
+        const n = entityAt(p.x + DX[d], p.y + DY[d]);
+        if (n && n.type === 'pipe' && !seen.has(n.id)) { seen.add(n.id); stack.push(n); }
+      }
+    }
+    let fluid = null;
+    for (const p of members) if (p.fluid) { fluid = p.fluid; break; }
+    let total = 0;
+    for (const p of members) if (p.fluid === fluid) total += (p.amount || 0);
+    const cap = members.length * PIPE_CAP;
+    total = Math.min(total, cap);
+    const net = { fluid: total > 1e-6 ? fluid : null, amount: total, cap, members };
+    nets.push(net);
+    for (const p of members) netOf.set(p.id, net);
+  }
+  return { nets, netOf };
+}
+
+// Split each network's amount evenly back onto its member pipe tiles.
+function redistributeNetworks(nets) {
+  for (const net of nets) {
+    if (!net.members.length) continue;
+    const per = net.amount / net.members.length;
+    for (const p of net.members) { p.fluid = net.fluid; p.amount = per; }
+  }
+}
+
+// Distinct networks touching any tile adjacent to entity `e`'s footprint.
+function adjacentFluidNets(e) {
+  const netOf = G.fluidNetOf;
+  if (!netOf) return [];
+  const nets = new Set();
+  for (const [tx, ty] of tilesOf(e.type, e.x, e.y)) {
+    for (let d = 0; d < 4; d++) {
+      const nb = entityAt(tx + DX[d], ty + DY[d]);
+      if (nb && nb.type === 'pipe') {
+        const n = netOf.get(nb.id);
+        if (n) nets.add(n);
+      }
+    }
+  }
+  return [...nets];
+}
+
+// The network a given pipe entity currently belongs to (or null).
+function fluidNetFor(e) {
+  return (G.fluidNetOf && G.fluidNetOf.get(e.id)) || null;
+}
+
+function updatePump(e, dt) {
+  e.active = false;
+  const nets = adjacentFluidNets(e);
+  const net = nets.find(n => n.fluid === null || n.fluid === 'water');
+  if (!net) return;
+  const room = net.cap - net.amount;
+  if (room <= 0) return;
+  const add = Math.min(PUMP_RATE * dt, room);
+  if (add <= 0) return;
+  net.fluid = 'water';
+  net.amount += add;
+  e.active = true;
+}
+
+function updateBoiler(e, dt) {
+  e.active = false;
+  const nets = adjacentFluidNets(e);
+  const inNet = nets.find(n => n.fluid === 'water' && n.amount > 0);
+  if (!inNet) return;
+  const outNet = nets.find(n => n !== inNet && (n.fluid === null || n.fluid === 'steam') && n.amount < n.cap);
+  if (!outNet) return;
+  if (!burnFuel(e, dt)) return;
+  const take = Math.min(BOILER_FLOW * dt, inNet.amount, outNet.cap - outNet.amount);
+  if (take <= 0) return;
+  inNet.amount -= take;
+  if (inNet.amount <= 1e-6) { inNet.amount = 0; inNet.fluid = null; }
+  outNet.fluid = 'steam';
+  outNet.amount += take; // 1:1 water-to-steam conversion
+  e.active = true;
+}
+
+function updateSteelForge(e, dt) {
+  e.active = false;
+  const need = STEEL_RECIPE.in;
+  if ((e.output[STEEL_RECIPE.out] || 0) >= STEEL_RECIPE.n * 4) return;
+  const nets = adjacentFluidNets(e);
+  const net = nets.find(n => n.fluid === 'steam' && n.amount > 0);
+  if (!net) return; // no steam supply: stalled
+  if (e.progress <= 0) {
+    for (const k in need) if ((e.input[k] || 0) < need[k]) return;
+    for (const k in need) { e.input[k] -= need[k]; if (!e.input[k]) delete e.input[k]; }
+    e.progress = 1e-6; // craft begins this tick
+  }
+  const drain = Math.min(FORGE_STEAM_RATE * dt, net.amount);
+  if (drain <= 0) return;
+  net.amount -= drain;
+  if (net.amount <= 1e-6) { net.amount = 0; net.fluid = null; }
+  e.active = true;
+  e.progress += dt / STEEL_RECIPE.time;
+  if (e.progress >= 1) {
+    e.progress = 0;
+    e.output[STEEL_RECIPE.out] = (e.output[STEEL_RECIPE.out] || 0) + STEEL_RECIPE.n;
+  }
+}
+
 // ---------- player hand actions ----------
 
 function updateHandMine(dt) {
@@ -441,6 +599,12 @@ function simTick(dt) {
   G.time += dt;
   updateHandMine(dt);
   updateCraftQueue(dt);
+
+  // Recompute fluid networks fresh each tick (cheap at this world scale).
+  const built = computeFluidNetworks();
+  G.fluidNets = built.nets;
+  G.fluidNetOf = built.netOf;
+
   for (const e of G.entities.values()) {
     switch (e.type) {
       case 'conveyor': case 'fast-conveyor': updateBelt(e, dt); break;
@@ -448,8 +612,12 @@ function simTick(dt) {
       case 'furnace': updateFurnace(e, dt); break;
       case 'crafter': updateCrafter(e, dt); break;
       case 'study': updateStudy(e, dt); break;
+      case 'pump': updatePump(e, dt); break;
+      case 'boiler': updateBoiler(e, dt); break;
+      case 'steel-forge': updateSteelForge(e, dt); break;
     }
   }
+  redistributeNetworks(G.fluidNets);
   // grabbers after everything else so they see settled belt state
   for (const e of G.entities.values()) {
     if (e.type === 'grabber') updateGrabber(e, dt);
@@ -473,6 +641,7 @@ function saveGame() {
     entities: ents,
     oreType: Array.from(World.oreType),
     oreAmount: Array.from(World.oreAmount),
+    water: Array.from(World.water),
   });
 }
 
@@ -480,9 +649,13 @@ function loadGame(json) {
   const s = JSON.parse(json);
   if (s.v !== 1) throw new Error('Unknown save version');
   G.seed = s.seed;
-  World.generate(s.seed); // regenerate terrain textures, then overwrite ore state
+  World.generate(s.seed); // regenerate terrain textures, then overwrite ore/water state
   World.oreType = Uint8Array.from(s.oreType);
   World.oreAmount = Int32Array.from(s.oreAmount);
+  // Older saves have no `water` array — keep the freshly generated lakes from
+  // World.generate() above. Any old entities that now overlap a lake still
+  // load fine (canPlace is not consulted for restored entities).
+  if (s.water) World.water = Uint8Array.from(s.water);
   G.time = s.time;
   G.nextId = s.nextId;
   G.inv = s.inv || {};
