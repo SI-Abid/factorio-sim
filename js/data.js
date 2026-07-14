@@ -43,6 +43,9 @@ const ITEMS = {
   'furnace':       { name: 'Furnace',        kind: 'machine', color: '#8f8f8f' },
   'crafter':       { name: 'Crafter',        kind: 'machine', color: '#5f8fb0' },
   'study':         { name: 'Study Table',    kind: 'machine', color: '#7a4fc9' },
+  'rail':          { name: 'Rail Track',     kind: 'machine', color: '#7d7d7d' },
+  'rail-depot':    { name: 'Rail Depot',     kind: 'machine', color: '#5a6470' },
+  'train':         { name: 'Hauler Train',   kind: 'machine', color: '#8a3030' },
 };
 
 // Recipes.
@@ -65,6 +68,9 @@ const RECIPES = [
   { id: 'furnace',       out: 'furnace',       n: 1, time: 2, in: { 'stone': 8 },                       station: 'craft' },
   { id: 'crafter',       out: 'crafter',       n: 1, time: 4, in: { 'iron-ingot': 9, 'gear': 3, 'circuit': 3 }, station: 'craft', tech: 'automation' },
   { id: 'study',         out: 'study',         n: 1, time: 4, in: { 'stone-brick': 10, 'circuit': 5, 'gear': 5 }, station: 'craft' },
+  { id: 'rail',          out: 'rail',          n: 4, time: 1, in: { 'iron-ingot': 1, 'stone': 1 },       station: 'craft', tech: 'railways' },
+  { id: 'rail-depot',    out: 'rail-depot',    n: 1, time: 3, in: { 'iron-ingot': 4, 'circuit': 2, 'gear': 2 }, station: 'craft', tech: 'railways' },
+  { id: 'train',         out: 'train',         n: 1, time: 5, in: { 'iron-ingot': 10, 'gear': 4, 'circuit': 2 }, station: 'craft', tech: 'railways' },
 ];
 const RECIPE_BY_ID = {};
 for (const r of RECIPES) RECIPE_BY_ID[r.id] = r;
@@ -91,6 +97,8 @@ const TECHS = [
     desc: 'Crafters work 50% faster.' },
   { id: 'omega',          name: 'Omega Research',    units: 40, packs: ['tome1', 'tome2'], req: ['logistics', 'efficiency', 'adv-automation'],
     desc: 'The final breakthrough. Completes the game.' },
+  { id: 'railways',       name: 'Railways',          units: 20, packs: ['tome1', 'tome2'], req: ['logistics', 'adv-tomes'],
+    desc: 'Unlocks Rail Track, Rail Depots, and Hauler Trains.' },
 ];
 const TECH_BY_ID = {};
 for (const t of TECHS) TECH_BY_ID[t.id] = t;
@@ -114,6 +122,12 @@ const ENTITY_DEFS = {
     desc: 'Consumes tomes to research technology.' },
   'fast-conveyor': { name: 'Fast Conveyor', w: 1, h: 1, rot: true, speed: 3, tech: 'logistics',
     desc: 'Moves items twice as fast.' },
+  'rail':          { name: 'Rail Track',    w: 1, h: 1, rot: false, tech: 'railways',
+    desc: 'Track for trains. Connects to adjacent rails (no signals).' },
+  'rail-depot':    { name: 'Rail Depot',    w: 1, h: 1, rot: true, tech: 'railways', cap: 100,
+    desc: 'A named train stop with a small buffer. Must be placed with a rail on its facing side.' },
+  'train':         { name: 'Hauler Train',  w: 1, h: 1, rot: false, tech: 'railways',
+    desc: 'A 2-car train. Place it on a rail; configure its route in its panel. Burns coal.' },
 };
 const BUILDABLE = Object.keys(ENTITY_DEFS);
 
@@ -126,6 +140,12 @@ const BURN_RATE = 2;         // energy units per second while working
 const STUDY_CYCLE = 2;       // seconds per research unit per study table
 const CHEST_CAP = 300;
 const HAND_MINE_TIME = 0.4;  // seconds per hand-mined ore
+
+// ---------- trains ----------
+const TRAIN_SPEED = 4;       // tiles/sec along the rail path
+const TRAIN_CARGO_CAP = 200; // items a train can carry
+const RAIL_DEPOT_CAP = 100;  // items a rail depot buffer can hold
+const TRAIN_DWELL = 4;       // seconds spent loading/unloading at a depot
 
 const STARTER_KIT = {
   'drill': 2, 'furnace': 4, 'conveyor': 30, 'grabber': 6, 'chest': 4,

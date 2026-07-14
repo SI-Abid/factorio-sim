@@ -39,7 +39,10 @@ coal, and stone**. Mine by hand, then automate:
 5. Craft **Basic Tomes**, feed them into a **Study Table**, and research technologies:
    the **Crafter** (automated crafting), **Fast Conveyors**, **Advanced Tomes**,
    drill/crafter speed boosts…
-6. Finish **Omega Research** to win. Then keep going — the forge must grow.
+6. Research **Railways** to unlock **Rail Track**, **Rail Depots** (named, renameable
+   stops with a small buffer), and **Hauler Trains** — 2-car units that BFS-pathfind
+   along your track and shuttle cargo between two depots, burning coal as they go.
+7. Finish **Omega Research** to win. Then keep going — the forge must grow.
 
 ### Controls
 
@@ -68,6 +71,9 @@ Progress autosaves to `localStorage` every minute (plus manual Save/Load buttons
 - **Research** — study tables consume tomes to progress a shared tech tree that
   unlocks recipes, buildings, and speed multipliers
 - **Hand crafting** with a queue, plus a guided hint line for new players
+- **Trains** — rails form an implicit graph (adjacent rail tiles connect); Hauler
+  Trains BFS-pathfind to a chosen depot, load/unload a configurable cargo swap, burn
+  coal while moving, and wait with a visible status if their track is broken
 
 ## Code layout
 
@@ -82,11 +88,14 @@ Progress autosaves to `localStorage` every minute (plus manual Save/Load buttons
 
 ## Roadmap ideas
 
-Power grids, fluids & pipes, trains, enemies/defense, blueprints, a minimap,
-two-lane belts, splitters, and modded recipes are all natural next steps.
+Power grids, fluids & pipes, enemies/defense, blueprints, a minimap,
+two-lane belts, splitters, rail signals/junctions, and modded recipes are all
+natural next steps.
 
 ## Development
 
 Everything is plain ES2020 — edit and refresh. A Playwright smoke test drives a full
 production chain headlessly (drill → belts → grabbers → furnace → chest, research,
-crafter, save/load) and screenshots the game; see `docs/`.
+crafter, save/load) and screenshots the game; see `docs/`. `tests/trains.test.js`
+covers the rail graph, an end-to-end fueled train haul between two depots, a
+broken-path waiting status, and a save/load round-trip mid-journey.

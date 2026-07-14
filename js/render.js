@@ -218,6 +218,44 @@ const Renderer = {
         for (const [rx, ry] of [[6, 6], [W - 8, 8], [8, H - 8], [W - 10, H - 10]]) px(rx, ry, 2, 2, '#c9b84f');
         break;
       }
+      case 'rail': {
+        // gravel bed
+        px(0, 0, W, H, '#4a4237');
+        const rng = makeRng(555);
+        for (let i = 0; i < 20; i++) {
+          const gx = Math.floor(rng() * (W / 2)) * 2, gy = Math.floor(rng() * (H / 2)) * 2;
+          px(gx, gy, 2, 2, rng() > 0.5 ? '#565042' : '#3e372c');
+        }
+        // sleepers (cross ties, drawn both axes since rails are undirected)
+        px(1, 3, W - 2, 2, '#6b4a2a'); px(1, H - 5, W - 2, 2, '#6b4a2a');
+        px(3, 1, 2, H - 2, '#6b4a2a'); px(W - 5, 1, 2, H - 2, '#6b4a2a');
+        // rails, drawn as a plus so any connection direction reads correctly
+        px(0, 7, W, 2, '#9aa0a8'); px(7, 0, 2, H, '#9aa0a8');
+        px(0, 7, W, 1, '#c6cad0'); px(7, 0, 1, H, '#c6cad0');
+        break;
+      }
+      case 'rail-depot': {
+        px(0, 0, W, H, '#3d4147');
+        px(1, 1, W - 2, H - 2, '#5a6470');
+        // platform boards
+        for (let i = 3; i < H - 2; i += 4) px(2, i, W - 4, 1, 'rgba(0,0,0,0.15)');
+        // small buffer chest motif in the middle
+        px(6, 7, 4, 4, '#8a5a2b');
+        px(7, 8, 2, 2, '#4a3010');
+        // connector arrow toward the rail side (north, before rotation)
+        px(7, 0, 2, 3, '#e8c34a');
+        px(5, 2, 6, 1, '#e8c34a');
+        break;
+      }
+      case 'train': {
+        // mini loco+wagon motif for the hotbar/inventory icon
+        px(2, 2, W - 4, 6, '#5a6470');
+        px(3, 3, W - 6, 4, '#454e58');
+        px(2, 9, W - 4, 6, '#8a3030');
+        px(3, 10, W - 6, 4, '#c04848');
+        px(W / 2 - 1, 10, 2, 2, '#f0e050');
+        break;
+      }
     }
     return c;
   },
@@ -310,6 +348,7 @@ const Renderer = {
     for (const e of belts) this.drawBelt(e);
     for (const e of others) this.drawEntity(e);
     for (const e of grabbers) this.drawGrabber(e);
+    for (const tr of G.trains) this.drawTrain(tr);
 
     // hover highlight
     if (state.hoverEnt) {
@@ -427,5 +466,46 @@ const Renderer = {
     ctx.fillStyle = '#8a6a20';
     ctx.fillRect(hxs - 2 * z, hys - 2 * z, 4 * z, 4 * z);
     if (e.hold) ctx.drawImage(this.icon(e.hold), hxs - 5 * z, hys - 5 * z, 10 * z, 10 * z);
+  },
+
+  // Trains are drawn smoothly along their rail path (not tile-snapped), above belts.
+  drawTrain(tr) {
+    const ctx = this.ctx, z = this.cam.zoom;
+    let cx, cy, ang;
+    if (tr.path && tr.path.length > 1) {
+      const a = tr.path[0], b = tr.path[1];
+      cx = a.x + (b.x - a.x) * tr.segT + 0.5;
+      cy = a.y + (b.y - a.y) * tr.segT + 0.5;
+      ang = Math.atan2(b.y - a.y, b.x - a.x);
+    } else {
+      cx = tr.x + 0.5; cy = tr.y + 0.5;
+      const d = tr.headingDir || 0;
+      ang = Math.atan2(DY[d], DX[d]);
+    }
+    const [sx, sy] = this.worldToScreen(cx, cy);
+    const unit = TILE * z;
+    ctx.save();
+    ctx.translate(sx, sy);
+    ctx.rotate(ang);
+    // trailing wagon (cargo car)
+    ctx.fillStyle = '#5a6470';
+    ctx.fillRect(-1.0 * unit, -0.35 * unit, 0.92 * unit, 0.7 * unit);
+    ctx.fillStyle = '#454e58';
+    ctx.fillRect(-0.95 * unit, -0.3 * unit, 0.82 * unit, 0.6 * unit);
+    // leading locomotive
+    ctx.fillStyle = '#8a3030';
+    ctx.fillRect(0.02 * unit, -0.4 * unit, 0.9 * unit, 0.8 * unit);
+    ctx.fillStyle = '#c04848';
+    ctx.fillRect(0.08 * unit, -0.35 * unit, 0.7 * unit, 0.7 * unit);
+    ctx.fillStyle = '#f0e050'; // headlamp
+    ctx.fillRect(0.85 * unit, -0.08 * unit, 0.12 * unit, 0.16 * unit);
+    ctx.restore();
+
+    if (tr.phase === 'blocked' || tr.phase === 'nofuel') {
+      ctx.fillStyle = '#ff3030';
+      ctx.font = 'bold ' + Math.max(10, Math.round(12 * z)) + 'px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('!', sx, sy - 14 * z);
+    }
   },
 };

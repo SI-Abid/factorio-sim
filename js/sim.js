@@ -14,6 +14,8 @@ const G = {
   stats: { mined: 0, smelted: 0, crafted: 0, placed: {} },
   victory: false,
   victoryShown: false,
+  trains: [],            // train units (not tile-registered; see makeTrain)
+  depotCounter: 0,       // for auto-naming "Depot N"
 };
 
 function keyXY(x, y) { return x + ',' + y; }
@@ -45,9 +47,15 @@ function tilesOf(type, x, y) {
   return out;
 }
 
-function canPlace(type, x, y) {
+function canPlace(type, x, y, dir) {
+  dir = dir || 0;
   const d = ENTITY_DEFS[type];
   if (!d || !entityUnlocked(type)) return false;
+  if (type === 'train') {
+    // trains ride on top of an existing rail tile, not an empty one
+    const r = entityAt(x, y);
+    return !!r && r.type === 'rail';
+  }
   for (const [tx, ty] of tilesOf(type, x, y)) {
     if (!World.inBounds(tx, ty)) return false;
     if (entityAt(tx, ty)) return false;
@@ -56,6 +64,11 @@ function canPlace(type, x, y) {
     let ore = false;
     for (const [tx, ty] of tilesOf(type, x, y)) if (World.oreAt(tx, ty)) ore = true;
     if (!ore) return false;
+  }
+  if (type === 'rail-depot') {
+    const rx = x + DX[dir], ry = y + DY[dir];
+    const r = entityAt(rx, ry);
+    if (!r || r.type !== 'rail') return false;
   }
   return true;
 }
@@ -78,14 +91,27 @@ function makeEntity(type, x, y, dir) {
       e.recipe = null; e.input = {}; e.output = {}; e.progress = 0; e.active = false; break;
     case 'study':
       e.packs = { tome1: 0, tome2: 0 }; e.progress = 0; break;
+    case 'rail-depot':
+      e.store = {};
+      G.depotCounter = (G.depotCounter || 0) + 1;
+      e.name = 'Depot ' + G.depotCounter;
+      e.railX = e.x + DX[e.dir]; e.railY = e.y + DY[e.dir];
+      break;
   }
   return e;
 }
 
-// Place from player inventory. Returns entity or null.
+// Place from player inventory. Returns entity (or train) or null.
 function placeEntity(type, x, y, dir) {
-  if (!canPlace(type, x, y)) return null;
+  if (!canPlace(type, x, y, dir)) return null;
   if (invCount(type) < 1) return null;
+  if (type === 'train') {
+    invAdd(type, -1);
+    const tr = makeTrain(x, y);
+    G.trains.push(tr);
+    G.stats.placed[type] = (G.stats.placed[type] || 0) + 1;
+    return tr;
+  }
   invAdd(type, -1);
   const e = makeEntity(type, x, y, dir);
   G.entities.set(e.id, e);
@@ -132,6 +158,12 @@ function insertIntoEntity(e, item) {
       e.store[item] = (e.store[item] || 0) + 1;
       return true;
     }
+    case 'rail-depot': {
+      let total = 0; for (const k in e.store) total += e.store[k];
+      if (total >= RAIL_DEPOT_CAP) return false;
+      e.store[item] = (e.store[item] || 0) + 1;
+      return true;
+    }
     case 'furnace': {
       if (item === 'coal' && e.fuelBuf < 5) { e.fuelBuf++; return true; }
       const r = smeltRecipeFor(item);
@@ -169,7 +201,7 @@ function insertIntoEntity(e, item) {
 // Try to take one item out of entity `e` (grabber pickup). Returns item id or null.
 function extractFromEntity(e) {
   switch (e.type) {
-    case 'chest':
+    case 'chest': case 'rail-depot':
       for (const k in e.store) {
         if (e.store[k] > 0) { e.store[k]--; if (!e.store[k]) delete e.store[k]; return k; }
       }
@@ -391,6 +423,220 @@ function startResearch(id) {
   return true;
 }
 
+// ---------- trains ----------
+//
+// Rails form an implicit graph: any two rail tiles that are orthogonally
+// adjacent are connected (no signals, no curves — just tile adjacency).
+// A train is *not* a tile-registered entity (it doesn't live in G.entities /
+// G.byTile) since it needs to glide smoothly across rail tiles rather than
+// occupy one; it lives in the flat G.trains list instead. Each train tracks
+// the rail tile it currently anchors on (x, y), the remaining BFS path to
+// its destination depot's adjacent rail tile (`path`, a list of {x,y} rail
+// tiles starting with the current tile), and `segT` (0..1 progress toward
+// path[1]). Trains don't collide with anything.
+
+function depotById(id) {
+  if (id === null || id === undefined) return null;
+  const e = G.entities.get(id);
+  return (e && e.type === 'rail-depot') ? e : null;
+}
+
+// BFS over rail tiles; returns an array of {x,y} waypoints from (sx,sy) to
+// (tx,ty) inclusive, or null if there's no unbroken rail path between them.
+function railPath(sx, sy, tx, ty) {
+  const s = entityAt(sx, sy), t = entityAt(tx, ty);
+  if (!s || s.type !== 'rail' || !t || t.type !== 'rail') return null;
+  const startKey = keyXY(sx, sy), goalKey = keyXY(tx, ty);
+  if (startKey === goalKey) return [{ x: sx, y: sy }];
+  const prev = new Map();
+  const visited = new Set([startKey]);
+  const queue = [[sx, sy]];
+  let qi = 0, found = false;
+  while (qi < queue.length) {
+    const [cx, cy] = queue[qi++];
+    if (keyXY(cx, cy) === goalKey) { found = true; break; }
+    for (let d = 0; d < 4; d++) {
+      const nx = cx + DX[d], ny = cy + DY[d];
+      const nk = keyXY(nx, ny);
+      if (visited.has(nk)) continue;
+      const r = entityAt(nx, ny);
+      if (!r || r.type !== 'rail') continue;
+      visited.add(nk);
+      prev.set(nk, keyXY(cx, cy));
+      queue.push([nx, ny]);
+    }
+  }
+  if (!found && !visited.has(goalKey)) return null;
+  const path = [];
+  let curKey = goalKey;
+  while (curKey !== startKey) {
+    const [a, b] = curKey.split(',').map(Number);
+    path.push({ x: a, y: b });
+    curKey = prev.get(curKey);
+    if (curKey === undefined) return null;
+  }
+  path.push({ x: sx, y: sy });
+  path.reverse();
+  return path;
+}
+
+function dirBetween(a, b) {
+  for (let d = 0; d < 4; d++) if (a.x + DX[d] === b.x && a.y + DY[d] === b.y) return d;
+  return 0;
+}
+
+function makeTrain(x, y) {
+  return {
+    id: G.nextId++,
+    type: 'train',
+    x, y,                  // rail tile the train currently anchors on
+    path: [{ x, y }],       // remaining route, path[0] === {x,y}
+    segT: 0,                // 0..1 progress toward path[1]
+    cargo: {},              // item -> count
+    fuel: 0, fuelBuf: 0,
+    depotA: null, depotB: null,  // rail-depot entity ids
+    loadAtA: true,          // true: load at A, unload at B. false: reversed.
+    target: null,           // 'A' | 'B' — which depot it's currently headed to
+    phase: 'unconfigured',  // unconfigured | moving | dwell | blocked | nofuel
+    dwellT: 0,
+    headingDir: 0,          // facing dir (for rendering) while idle/blocked
+  };
+}
+
+// Unload cargo into the depot (as much as fits), then load from the depot's
+// buffer up to the train's cargo cap — but since each train is configured to
+// load at exactly one of its two depots and unload at the other, only one of
+// these actually happens per arrival.
+function arriveAtDepot(tr, depot, isLoad) {
+  if (isLoad) {
+    let cargoTotal = 0; for (const k in tr.cargo) cargoTotal += tr.cargo[k];
+    for (const k of Object.keys(depot.store)) {
+      const room = TRAIN_CARGO_CAP - cargoTotal;
+      if (room <= 0) break;
+      const take = Math.min(depot.store[k], room);
+      if (take > 0) {
+        tr.cargo[k] = (tr.cargo[k] || 0) + take;
+        depot.store[k] -= take;
+        if (depot.store[k] <= 0) delete depot.store[k];
+        cargoTotal += take;
+      }
+    }
+  } else {
+    let depotTotal = 0; for (const k in depot.store) depotTotal += depot.store[k];
+    for (const k of Object.keys(tr.cargo)) {
+      const room = RAIL_DEPOT_CAP - depotTotal;
+      if (room <= 0) break;
+      const put = Math.min(tr.cargo[k], room);
+      if (put > 0) {
+        depot.store[k] = (depot.store[k] || 0) + put;
+        tr.cargo[k] -= put;
+        if (tr.cargo[k] <= 0) delete tr.cargo[k];
+        depotTotal += put;
+      }
+    }
+  }
+  tr.phase = 'dwell';
+  tr.dwellT = TRAIN_DWELL;
+}
+
+function updateTrain(tr, dt) {
+  const depotA = depotById(tr.depotA);
+  const depotB = depotById(tr.depotB);
+  if (!depotA || !depotB) { tr.phase = 'unconfigured'; return; }
+
+  const loadLetter = tr.loadAtA ? 'A' : 'B';
+  if (tr.target !== 'A' && tr.target !== 'B') tr.target = loadLetter;
+
+  if (tr.phase === 'dwell') {
+    tr.dwellT -= dt;
+    if (tr.dwellT <= 0) {
+      tr.target = tr.target === 'A' ? 'B' : 'A';
+      tr.path = [{ x: tr.x, y: tr.y }];
+      tr.segT = 0;
+      tr.phase = 'moving';
+    }
+    return;
+  }
+
+  const targetDepot = tr.target === 'A' ? depotA : depotB;
+  const goalX = targetDepot.railX, goalY = targetDepot.railY;
+
+  const havePath = tr.path && tr.path.length > 0 &&
+    tr.path[tr.path.length - 1].x === goalX && tr.path[tr.path.length - 1].y === goalY;
+  if (!havePath) {
+    const p = railPath(tr.x, tr.y, goalX, goalY);
+    if (!p) { tr.phase = 'blocked'; return; }
+    tr.path = p;
+    tr.segT = 0;
+  }
+
+  if (tr.path.length === 1) {
+    arriveAtDepot(tr, targetDepot, tr.target === loadLetter);
+    return;
+  }
+
+  const nextTile = tr.path[1];
+  const nEnt = entityAt(nextTile.x, nextTile.y);
+  if (!nEnt || nEnt.type !== 'rail') { tr.phase = 'blocked'; tr.path = null; return; }
+
+  if (!burnFuel(tr, dt)) { tr.phase = 'nofuel'; return; }
+
+  tr.phase = 'moving';
+  tr.headingDir = dirBetween(tr.path[0], tr.path[1]);
+  tr.segT += TRAIN_SPEED * dt;
+  while (tr.segT >= 1 && tr.path.length > 1) {
+    tr.segT -= 1;
+    tr.path.shift();
+    tr.x = tr.path[0].x; tr.y = tr.path[0].y;
+    if (tr.path.length === 1) {
+      arriveAtDepot(tr, targetDepot, tr.target === loadLetter);
+      tr.segT = 0;
+      break;
+    }
+    const nt = tr.path[1];
+    const ne = entityAt(nt.x, nt.y);
+    if (!ne || ne.type !== 'rail') { tr.phase = 'blocked'; tr.path = null; tr.segT = 0; break; }
+    tr.headingDir = dirBetween(tr.path[0], nt);
+  }
+}
+
+function trainStatusText(tr) {
+  switch (tr.phase) {
+    case 'unconfigured': return 'Idle — select Depot A and Depot B in the panel';
+    case 'moving': return 'En route to Depot ' + tr.target;
+    case 'dwell': {
+      const loadLetter = tr.loadAtA ? 'A' : 'B';
+      const verb = tr.target === loadLetter ? 'Loading at' : 'Unloading at';
+      return verb + ' Depot ' + tr.target + ' (' + Math.max(0, tr.dwellT).toFixed(1) + 's)';
+    }
+    case 'blocked': return 'Waiting — no rail path to Depot ' + tr.target;
+    case 'nofuel': return 'Waiting — out of fuel';
+    default: return 'Idle';
+  }
+}
+
+// Tiles currently spanned by the (2-car) train, for click/hover hit-testing.
+function trainTiles(tr) {
+  const tiles = [{ x: tr.x, y: tr.y }];
+  if (tr.path && tr.path.length > 1) tiles.push(tr.path[1]);
+  return tiles;
+}
+function trainAt(x, y) {
+  for (const tr of G.trains) {
+    for (const t of trainTiles(tr)) if (t.x === x && t.y === y) return tr;
+  }
+  return null;
+}
+
+// Remove a train, refunding it, its cargo, and its buffered fuel.
+function removeTrain(tr) {
+  const i = G.trains.indexOf(tr);
+  if (i >= 0) G.trains.splice(i, 1);
+  invAdd('train', 1);
+  for (const k in tr.cargo) invAdd(k, tr.cargo[k]);
+  if (tr.fuelBuf) invAdd('coal', tr.fuelBuf);
+}
+
 // ---------- player hand actions ----------
 
 function updateHandMine(dt) {
@@ -454,6 +700,7 @@ function simTick(dt) {
   for (const e of G.entities.values()) {
     if (e.type === 'grabber') updateGrabber(e, dt);
   }
+  for (const tr of G.trains) updateTrain(tr, dt);
 }
 
 // ---------- save / load ----------
@@ -471,6 +718,8 @@ function saveGame() {
     stats: G.stats,
     victoryShown: G.victoryShown,
     entities: ents,
+    trains: G.trains,
+    depotCounter: G.depotCounter,
     oreType: Array.from(World.oreType),
     oreAmount: Array.from(World.oreAmount),
   });
@@ -498,5 +747,10 @@ function loadGame(json) {
     G.entities.set(e.id, e);
     for (const [tx, ty] of tilesOf(e.type, e.x, e.y)) G.byTile.set(keyXY(tx, ty), e);
   }
+  G.depotCounter = s.depotCounter || 0;
+  // Train paths are plain {x,y} waypoint lists, so they round-trip through
+  // JSON fine as-is; if a rail happened to change since the save, the next
+  // simTick's updateTrain() call will notice and recompute the BFS path.
+  G.trains = s.trains || [];
   if (typeof Renderer !== 'undefined' && Renderer.ready) Renderer.redrawTerrain();
 }
