@@ -37,24 +37,26 @@ function mineSpeedMult() { return techDone('efficiency') ? 1.5 : 1; }
 function crafterSpeedMult() { return techDone('adv-automation') ? 1.5 : 1; }
 
 // ---------- placement ----------
-function tilesOf(type, x, y) {
-  const d = ENTITY_DEFS[type];
+// Tiles occupied by `type` placed at (x,y) with rotation `dir` (top-left anchored,
+// footprint swapped for E/W rotations — see footprintWH in data.js).
+function tilesOf(type, x, y, dir) {
+  const [w, h] = footprintWH(type, dir || 0);
   const out = [];
-  for (let ty = y; ty < y + d.h; ty++)
-    for (let tx = x; tx < x + d.w; tx++) out.push([tx, ty]);
+  for (let ty = y; ty < y + h; ty++)
+    for (let tx = x; tx < x + w; tx++) out.push([tx, ty]);
   return out;
 }
 
-function canPlace(type, x, y) {
+function canPlace(type, x, y, dir) {
   const d = ENTITY_DEFS[type];
   if (!d || !entityUnlocked(type)) return false;
-  for (const [tx, ty] of tilesOf(type, x, y)) {
+  for (const [tx, ty] of tilesOf(type, x, y, dir)) {
     if (!World.inBounds(tx, ty)) return false;
     if (entityAt(tx, ty)) return false;
   }
   if (type === 'drill') {
     let ore = false;
-    for (const [tx, ty] of tilesOf(type, x, y)) if (World.oreAt(tx, ty)) ore = true;
+    for (const [tx, ty] of tilesOf(type, x, y, dir)) if (World.oreAt(tx, ty)) ore = true;
     if (!ore) return false;
   }
   return true;
@@ -64,7 +66,7 @@ function makeEntity(type, x, y, dir) {
   const e = { id: G.nextId++, type, x, y, dir: dir || 0 };
   switch (type) {
     case 'conveyor': case 'fast-conveyor':
-      e.items = []; break;                       // [{item, pos 0..1}]
+      e.items = []; break;                       // [{item, pos 0..1, lane 0|1}]
     case 'grabber':
       e.hold = null; e.arm = 0; break;           // arm: 0 = pick side, 1 = drop side
     case 'chest':
@@ -78,26 +80,49 @@ function makeEntity(type, x, y, dir) {
       e.recipe = null; e.input = {}; e.output = {}; e.progress = 0; e.active = false; break;
     case 'study':
       e.packs = { tome1: 0, tome2: 0 }; e.progress = 0; break;
+    case 'splitter':
+      e.buf = []; e.nextOut = 0; break;          // buf: [{item, lane}] mid-transfer; nextOut: 0|1 round-robin
+    case 'tunnel-belt':
+      e.role = 'entrance'; e.pairId = null; e.queue = []; break; // queue (entrance only): [{item, lane, t}]
   }
   return e;
 }
 
 // Place from player inventory. Returns entity or null.
 function placeEntity(type, x, y, dir) {
-  if (!canPlace(type, x, y)) return null;
+  if (!canPlace(type, x, y, dir)) return null;
   if (invCount(type) < 1) return null;
   invAdd(type, -1);
   const e = makeEntity(type, x, y, dir);
   G.entities.set(e.id, e);
-  for (const [tx, ty] of tilesOf(type, x, y)) G.byTile.set(keyXY(tx, ty), e);
+  for (const [tx, ty] of tilesOf(type, x, y, dir)) G.byTile.set(keyXY(tx, ty), e);
   G.stats.placed[type] = (G.stats.placed[type] || 0) + 1;
+  if (type === 'tunnel-belt') linkTunnelBelt(e);
   return e;
+}
+
+// Search up to TUNNEL_RANGE tiles ahead and behind a freshly placed tunnel-belt for an
+// unpaired one facing the same way; the found tile decides which end is entrance/exit.
+function linkTunnelBelt(e) {
+  for (let k = 1; k <= TUNNEL_RANGE; k++) {
+    for (const dir of [e.dir, oppositeDir(e.dir)]) {
+      const tx = e.x + DX[dir] * k, ty = e.y + DY[dir] * k;
+      const other = entityAt(tx, ty);
+      if (other && other.id !== e.id && other.type === 'tunnel-belt' &&
+          other.dir === e.dir && other.pairId === null) {
+        if (dir === e.dir) { e.role = 'entrance'; other.role = 'exit'; }
+        else { e.role = 'exit'; other.role = 'entrance'; }
+        e.pairId = other.id; other.pairId = e.id;
+        return;
+      }
+    }
+  }
 }
 
 // Remove entity, refunding it and its contents to the player.
 function removeEntity(e) {
   G.entities.delete(e.id);
-  for (const [tx, ty] of tilesOf(e.type, e.x, e.y)) G.byTile.delete(keyXY(tx, ty));
+  for (const [tx, ty] of tilesOf(e.type, e.x, e.y, e.dir)) G.byTile.delete(keyXY(tx, ty));
   invAdd(e.type, 1);
   if (e.items) for (const it of e.items) invAdd(it.item, 1);
   if (e.hold) invAdd(e.hold, 1);
@@ -109,6 +134,12 @@ function removeEntity(e) {
   if (e.input) for (const k in e.input) invAdd(k, e.input[k]);
   if (e.output) for (const k in e.output) invAdd(k, e.output[k]);
   if (e.packs) { invAdd('tome1', e.packs.tome1 || 0); invAdd('tome2', e.packs.tome2 || 0); }
+  if (e.buf) for (const it of e.buf) invAdd(it.item, 1);
+  if (e.queue) for (const q of e.queue) invAdd(q.item, 1);
+  if (e.type === 'tunnel-belt' && e.pairId !== null) {
+    const p = G.entities.get(e.pairId);
+    if (p) { p.pairId = null; p.role = 'entrance'; }
+  }
 }
 
 // Drill output tile (adjacent, on the facing side).
@@ -162,6 +193,8 @@ function insertIntoEntity(e, item) {
       }
       return false;
     }
+    case 'tunnel-belt':
+      return tunnelAccept(e, item, 1); // arm/drill drops land on the right lane, like belts
   }
   return false;
 }
@@ -185,31 +218,57 @@ function extractFromEntity(e) {
         if (e.output[k] > 0) { e.output[k]--; if (!e.output[k]) delete e.output[k]; return k; }
       }
       return null;
+    case 'tunnel-belt': {
+      const r = tunnelExtractLane(e);
+      return r ? r.item : null;
+    }
   }
   return null;
 }
 
 // ---------- belt helpers ----------
+// Each conveyor has two lanes (0 = left, 1 = right, relative to its direction of travel),
+// each spaced independently by BELT_GAP. Items stay in one flat `items` array with a
+// `lane` tag so the belt API and save format don't need a second list.
 
-// Can an item be added to belt at position `pos`? (no item within BELT_GAP)
-function beltHasRoomAt(belt, pos) {
-  for (const it of belt.items) if (Math.abs(it.pos - pos) < BELT_GAP) return false;
+// Can an item be added to belt at position `pos` on lane `lane`? (no item within BELT_GAP)
+function beltHasRoomAt(belt, pos, lane) {
+  lane = lane || 0;
+  for (const it of belt.items) if ((it.lane || 0) === lane && Math.abs(it.pos - pos) < BELT_GAP) return false;
   return true;
 }
-function beltAddItem(belt, item, pos) {
-  if (!beltHasRoomAt(belt, pos)) return false;
-  belt.items.push({ item, pos });
+function beltAddItem(belt, item, pos, lane) {
+  lane = lane || 0;
+  if (!beltHasRoomAt(belt, pos, lane)) return false;
+  belt.items.push({ item, pos, lane });
   return true;
 }
-// Remove and return the belt item closest to the tile middle (or null).
-function beltTakeItem(belt) {
+// Remove and return {item, lane} for the belt item closest to the tile middle (or null).
+function beltTakeItemLane(belt) {
   if (!belt.items.length) return null;
   let best = 0, bestD = Infinity;
   for (let i = 0; i < belt.items.length; i++) {
     const d = Math.abs(belt.items[i].pos - 0.55);
     if (d < bestD) { bestD = d; best = i; }
   }
-  return belt.items.splice(best, 1)[0].item;
+  const it = belt.items.splice(best, 1)[0];
+  return { item: it.item, lane: it.lane || 0 };
+}
+// Remove and return just the item id (lane discarded) — used by grabbers.
+function beltTakeItem(belt) {
+  const r = beltTakeItemLane(belt);
+  return r ? r.item : null;
+}
+
+// Which lane should an item entering a belt facing `toDir`, coming from an entity
+// facing `fromDir`, land on? Straight continuations keep the lane; turns/side-loads
+// land on whichever lane is physically nearest the incoming direction.
+function transferLane(fromDir, toDir, curLane) {
+  if (toDir === fromDir) return curLane || 0;
+  // The source sits opposite its own travel direction, relative to the target tile.
+  // If that source-relative-to-target offset lines up with the target's right side, lane 1.
+  const rx = DX[(toDir + 1) % 4], ry = DY[(toDir + 1) % 4];
+  return (rx * DX[fromDir] + ry * DY[fromDir]) < 0 ? 1 : 0;
 }
 
 // ---------- per-entity updates ----------
@@ -217,29 +276,134 @@ function beltTakeItem(belt) {
 function updateBelt(e, dt) {
   if (!e.items.length) return;
   const speed = ENTITY_DEFS[e.type].speed;
-  e.items.sort((a, b) => b.pos - a.pos);
   const nx = e.x + DX[e.dir], ny = e.y + DY[e.dir];
   const next = entityAt(nx, ny);
 
-  for (let i = 0; i < e.items.length; i++) {
-    const it = e.items[i];
-    let target = it.pos + speed * dt;
-    if (i > 0) target = Math.min(target, e.items[i - 1].pos - BELT_GAP);
-    if (i === 0 && target >= 1) {
-      // front item: try to flow onto the next belt
-      if (isBelt(next) && next.dir !== oppositeDir(e.dir)) {
-        const carry = Math.min(target - 1, speed * dt);
-        if (beltHasRoomAt(next, carry)) {
-          e.items.shift();
-          next.items.push({ item: it.item, pos: carry });
-          i--;
-          continue;
+  for (let lane = 0; lane < 2; lane++) {
+    const laneItems = e.items.filter(it => (it.lane || 0) === lane);
+    laneItems.sort((a, b) => b.pos - a.pos);
+
+    for (let i = 0; i < laneItems.length; i++) {
+      const it = laneItems[i];
+      let target = it.pos + speed * dt;
+      if (i > 0) target = Math.min(target, laneItems[i - 1].pos - BELT_GAP);
+      if (i === 0 && target >= 1) {
+        // front item: try to flow onto the next belt or into a tunnel-belt entrance
+        if (next && next.type === 'tunnel-belt' && next.role === 'entrance' && next.dir === e.dir) {
+          if (tunnelAccept(next, it.item, lane)) {
+            e.items.splice(e.items.indexOf(it), 1);
+            laneItems.splice(i, 1); i--;
+            continue;
+          }
+        } else if (isBelt(next) && next.dir !== oppositeDir(e.dir)) {
+          const carry = Math.min(target - 1, speed * dt);
+          const outLane = transferLane(e.dir, next.dir, lane);
+          if (beltHasRoomAt(next, carry, outLane)) {
+            e.items.splice(e.items.indexOf(it), 1);
+            next.items.push({ item: it.item, pos: carry, lane: outLane });
+            laneItems.splice(i, 1); i--;
+            continue;
+          }
         }
+        target = 1; // blocked: wait at the end of the belt
       }
-      target = 1; // blocked: wait at the end of the belt
+      it.pos = Math.max(0, Math.min(target, i === 0 ? 1 : Math.max(0, target)));
     }
-    it.pos = Math.max(0, Math.min(target, i === 0 ? 1 : Math.max(0, target)));
   }
+}
+
+// ---------- splitter ----------
+
+// The two tiles the splitter occupies, in a stable channel order (0, 1).
+function splitterChannels(e) { return tilesOf('splitter', e.x, e.y, e.dir); }
+
+// Hand `item` (carrying `lane`) to whatever sits at (tx,ty), belt-aware. Returns success.
+// `pos` is where it lands on a belt (0.5 = arm/drill drop into the middle, like before;
+// splitters/tunnel exits use a small value so items look like they're continuing a flow).
+function feedForward(tx, ty, fromDir, item, lane, pos) {
+  const target = entityAt(tx, ty);
+  if (!target) return false;
+  if (isBelt(target)) return beltAddItem(target, item, pos === undefined ? 0.5 : pos, transferLane(fromDir, target.dir, lane));
+  if (target.type === 'tunnel-belt') return tunnelAccept(target, item, lane);
+  return insertIntoEntity(target, item);
+}
+// Pull one item (with its lane, defaulting to 1 for non-belt sources) from (tx,ty).
+function pullFrom(tx, ty) {
+  const src = entityAt(tx, ty);
+  if (!src) return null;
+  if (isBelt(src)) return beltTakeItemLane(src);
+  if (src.type === 'tunnel-belt') return tunnelExtractLane(src);
+  const item = extractFromEntity(src);
+  return item ? { item, lane: 1 } : null;
+}
+
+function updateSplitter(e, dt) {
+  const channels = splitterChannels(e);
+
+  // 1. drain the buffer to the two output tiles, round-robin, preserving lane
+  let guard = e.buf.length + 1;
+  while (e.buf.length && guard-- > 0) {
+    const it = e.buf[0];
+    const primary = e.nextOut, secondary = 1 - e.nextOut;
+    const [px, py] = channels[primary], [sx, sy] = channels[secondary];
+    if (feedForward(px + DX[e.dir], py + DY[e.dir], e.dir, it.item, it.lane, 0.1)) {
+      e.buf.shift(); e.nextOut = secondary;
+    } else if (feedForward(sx + DX[e.dir], sy + DY[e.dir], e.dir, it.item, it.lane, 0.1)) {
+      e.buf.shift(); // took the other side this time; keep nextOut as-is for fairness
+    } else break; // both outputs jammed
+  }
+
+  // 2. pull fresh items from behind into the buffer
+  for (const [cx, cy] of channels) {
+    if (e.buf.length >= SPLITTER_BUF_CAP) break;
+    const r = pullFrom(cx - DX[e.dir], cy - DY[e.dir]);
+    if (r) e.buf.push(r);
+  }
+}
+
+// ---------- tunnel belt ----------
+
+function tunnelPartner(e) { return e.pairId === null ? null : G.entities.get(e.pairId) || null; }
+function tunnelDistance(e) {
+  const p = tunnelPartner(e);
+  return p ? Math.abs(p.x - e.x) + Math.abs(p.y - e.y) : null;
+}
+function tunnelCapacity(e) {
+  const dist = tunnelDistance(e);
+  return dist === null ? 1 : Math.max(1, Math.round(dist / BELT_GAP));
+}
+// Entrance only: enqueue an item for underground transit. Returns success.
+function tunnelAccept(e, item, lane) {
+  if (e.role !== 'entrance') return false;
+  if (e.queue.length >= tunnelCapacity(e)) return false;
+  const dist = tunnelDistance(e);
+  e.queue.push({ item, lane: lane || 0, t: dist === null ? Infinity : dist / TUNNEL_SPEED });
+  return true;
+}
+// Exit only: take the arrived front item (if its transit timer has elapsed) from the
+// paired entrance's queue. Returns {item, lane} or null.
+function tunnelExtractLane(e) {
+  if (e.role !== 'exit') return null;
+  const entrance = tunnelPartner(e);
+  if (!entrance || !entrance.queue.length) return null;
+  const front = entrance.queue[0];
+  if (front.t > 0) return null;
+  entrance.queue.shift();
+  return { item: front.item, lane: front.lane };
+}
+
+function updateTunnelBelt(e, dt) {
+  if (e.role !== 'entrance' || !e.queue.length) return;
+  for (const q of e.queue) if (q.t > 0) q.t = Math.max(0, q.t - dt);
+  const front = e.queue[0];
+  if (front.t > 0) return;
+  const exit = tunnelPartner(e);
+  if (!exit) return; // unpaired: item waits at the mouth until a partner shows up
+  // auto-deliver onto whatever sits directly beyond the exit
+  if (feedForward(exit.x + DX[exit.dir], exit.y + DY[exit.dir], exit.dir, front.item, front.lane, 0.1)) {
+    e.queue.shift();
+  }
+  // otherwise the item stays queued, ready for tunnelExtractLane (e.g. a grabber at the exit)
 }
 
 function burnFuel(e, dt) {
@@ -252,23 +416,16 @@ function burnFuel(e, dt) {
 
 function updateDrill(e, dt) {
   e.active = false;
-  // eject buffered output first
+  // eject buffered output first (lands on the right lane if it's a belt)
   if (e.outBuf.length) {
     const [ox, oy] = drillOutputTile(e);
-    const target = entityAt(ox, oy);
-    if (target) {
-      if (isBelt(target)) {
-        if (beltAddItem(target, e.outBuf[0], 0.5)) e.outBuf.shift();
-      } else if (insertIntoEntity(target, e.outBuf[0])) {
-        e.outBuf.shift();
-      }
-    }
+    if (feedForward(ox, oy, e.dir, e.outBuf[0], 1)) e.outBuf.shift();
   }
   if (e.outBuf.length >= 3) return; // stalled until output drains
 
   // find an ore tile under the drill
   let oreTile = null;
-  for (const [tx, ty] of tilesOf('drill', e.x, e.y)) {
+  for (const [tx, ty] of tilesOf('drill', e.x, e.y, e.dir)) {
     if (World.oreAt(tx, ty)) { oreTile = [tx, ty]; break; }
   }
   if (!oreTile) return;
@@ -334,6 +491,7 @@ function updateGrabber(e, dt) {
       const px = e.x - DX[e.dir], py = e.y - DY[e.dir];
       const src = entityAt(px, py);
       if (src) {
+        // beltTakeItem already prefers whichever lane has an item closest to the front
         if (isBelt(src)) e.hold = beltTakeItem(src);
         else e.hold = extractFromEntity(src);
       }
@@ -346,7 +504,7 @@ function updateGrabber(e, dt) {
       const dst = entityAt(dx, dy);
       if (dst) {
         if (isBelt(dst)) {
-          if (beltAddItem(dst, e.hold, 0.5)) e.hold = null;
+          if (beltAddItem(dst, e.hold, 0.5, 1)) e.hold = null; // drops land on the right lane
         } else if (insertIntoEntity(dst, e.hold)) {
           e.hold = null;
         }
@@ -448,11 +606,13 @@ function simTick(dt) {
       case 'furnace': updateFurnace(e, dt); break;
       case 'crafter': updateCrafter(e, dt); break;
       case 'study': updateStudy(e, dt); break;
+      case 'tunnel-belt': updateTunnelBelt(e, dt); break;
     }
   }
-  // grabbers after everything else so they see settled belt state
+  // grabbers & splitters after everything else so they see settled belt state
   for (const e of G.entities.values()) {
     if (e.type === 'grabber') updateGrabber(e, dt);
+    else if (e.type === 'splitter') updateSplitter(e, dt);
   }
 }
 
@@ -496,7 +656,7 @@ function loadGame(json) {
   G.byTile = new Map();
   for (const e of s.entities) {
     G.entities.set(e.id, e);
-    for (const [tx, ty] of tilesOf(e.type, e.x, e.y)) G.byTile.set(keyXY(tx, ty), e);
+    for (const [tx, ty] of tilesOf(e.type, e.x, e.y, e.dir)) G.byTile.set(keyXY(tx, ty), e);
   }
   if (typeof Renderer !== 'undefined' && Renderer.ready) Renderer.redrawTerrain();
 }

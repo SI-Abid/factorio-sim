@@ -218,6 +218,30 @@ const Renderer = {
         for (const [rx, ry] of [[6, 6], [W - 8, 8], [8, H - 8], [W - 10, H - 10]]) px(rx, ry, 2, 2, '#c9b84f');
         break;
       }
+      case 'splitter': {
+        // drawn NORTH-facing: 2 tiles wide, 1 deep, flow toward -y (up)
+        px(0, 0, W, H, '#3c3c44');
+        px(0, 0, 2, H, '#26262c'); px(W - 2, 0, 2, H, '#26262c');
+        px(W / 2 - 1, 0, 2, H, '#55555f');   // center divider between the two channels
+        for (let i = 2; i < H; i += 4) {
+          px(2, i, W / 2 - 4, 1, 'rgba(255,255,255,0.06)');
+          px(W / 2 + 2, i, W / 2 - 4, 1, 'rgba(255,255,255,0.06)');
+        }
+        // two output chevrons on the north edge, one per channel
+        for (const cx of [W / 4, 3 * W / 4]) {
+          px(cx - 1, 0, 2, 3, '#e8c34a');
+          px(cx - 3, 2, 6, 1, '#e8c34a');
+        }
+        break;
+      }
+      case 'tunnel-belt': {
+        // generic tunnel mouth; entrance/exit look is added dynamically at draw time
+        px(0, 0, W, H, '#3c3c44');
+        px(0, 0, 2, H, '#26262c'); px(W - 2, 0, 2, H, '#26262c');
+        px(3, 3, W - 6, H - 6, '#1c1c20');
+        px(4, 4, W - 8, H - 8, '#111114');
+        break;
+      }
     }
     return c;
   },
@@ -299,7 +323,8 @@ const Renderer = {
     const drawn = new Set();
     const belts = [], others = [], grabbers = [];
     for (const e of G.entities.values()) {
-      if (e.x + ENTITY_DEFS[e.type].w < tx0 || e.x > tx1 || e.y + ENTITY_DEFS[e.type].h < ty0 || e.y > ty1) continue;
+      const [fw, fh] = footprintWH(e.type, e.dir);
+      if (e.x + fw < tx0 || e.x > tx1 || e.y + fh < ty0 || e.y > ty1) continue;
       if (drawn.has(e.id)) continue;
       drawn.add(e.id);
       if (isBelt(e)) belts.push(e);
@@ -313,11 +338,12 @@ const Renderer = {
 
     // hover highlight
     if (state.hoverEnt) {
-      const e = state.hoverEnt, d = ENTITY_DEFS[e.type];
+      const e = state.hoverEnt;
+      const [fw, fh] = footprintWH(e.type, e.dir);
       const [hx, hy] = this.worldToScreen(e.x, e.y);
       ctx.strokeStyle = 'rgba(255,255,255,0.85)';
       ctx.lineWidth = 2;
-      ctx.strokeRect(hx, hy, d.w * TILE * z, d.h * TILE * z);
+      ctx.strokeRect(hx, hy, fw * TILE * z, fh * TILE * z);
     }
 
     // build ghost
@@ -327,10 +353,10 @@ const Renderer = {
       const s = this.sprite(type, d.rot ? dir : 0);
       const [gsx, gsy] = this.worldToScreen(gx, gy);
       ctx.globalAlpha = 0.6;
-      ctx.drawImage(s, gsx, gsy, d.w * TILE * z, d.h * TILE * z);
+      ctx.drawImage(s, gsx, gsy, s.width * z, s.height * z);
       ctx.globalAlpha = 0.28;
       ctx.fillStyle = ok ? '#40ff60' : '#ff4040';
-      ctx.fillRect(gsx, gsy, d.w * TILE * z, d.h * TILE * z);
+      ctx.fillRect(gsx, gsy, s.width * z, s.height * z);
       ctx.globalAlpha = 1;
     }
   },
@@ -340,7 +366,7 @@ const Renderer = {
     const d = ENTITY_DEFS[e.type];
     const s = this.sprite(e.type, d.rot ? e.dir : 0);
     const [ex, ey] = this.worldToScreen(e.x, e.y);
-    ctx.drawImage(s, ex, ey, d.w * TILE * z, d.h * TILE * z);
+    ctx.drawImage(s, ex, ey, s.width * z, s.height * z);
 
     // dynamic bits
     if (e.type === 'furnace' && e.active) {
@@ -374,6 +400,41 @@ const Renderer = {
         ctx.fillRect(rx, ry, 2 * z, 2 * z);
       }
     }
+    if (e.type === 'splitter') {
+      const channels = splitterChannels(e);
+      for (let ci = 0; ci < 2; ci++) {
+        const [csx, csy] = this.worldToScreen(channels[ci][0] + 0.5, channels[ci][1] + 0.5);
+        if (ci === e.nextOut) {
+          ctx.fillStyle = 'rgba(255,255,255,0.55)';
+          ctx.beginPath(); ctx.arc(csx, csy, 2.5 * z, 0, Math.PI * 2); ctx.fill();
+        }
+      }
+      for (let i = 0; i < e.buf.length; i++) {
+        const [csx, csy] = this.worldToScreen(channels[i % 2][0] + 0.5, channels[i % 2][1] + 0.5);
+        ctx.drawImage(this.icon(e.buf[i].item), csx - 5 * z, csy - 5 * z, 10 * z, 10 * z);
+      }
+    }
+    if (e.type === 'tunnel-belt') {
+      // hood arrow points in the flow direction (e.dir); gold = entrance, green = exit
+      const [cx, cy] = this.worldToScreen(e.x + 0.5, e.y + 0.5);
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(e.dir * Math.PI / 2);
+      ctx.fillStyle = e.role === 'exit' ? '#8ad84a' : '#e8c34a';
+      ctx.beginPath();
+      ctx.moveTo(-3 * z, 1 * z); ctx.lineTo(0, -3 * z); ctx.lineTo(3 * z, 1 * z);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+      if (e.pairId === null) {
+        ctx.fillStyle = '#d84a4a';
+        ctx.fillRect(ex + 11 * z, ey + 1 * z, 3 * z, 3 * z);
+      } else if (e.role === 'entrance' && e.queue.length) {
+        const pulse = 0.5 + 0.5 * Math.sin(G.time * 8 + e.id);
+        ctx.fillStyle = `rgba(232,196,74,${0.25 + 0.5 * pulse})`;
+        ctx.fillRect(cx - 2 * z, cy - 2 * z, 4 * z, 4 * z);
+      }
+    }
   },
 
   drawBelt(e) {
@@ -399,10 +460,13 @@ const Renderer = {
     ctx.fill();
     ctx.restore();
 
-    // items on belt
+    // items on belt — offset ±LANE_OFFSET perpendicular to travel (lane 1 = right, 0 = left)
+    const rightDir = (e.dir + 1) % 4;
     for (const it of e.items) {
-      const ix = e.x + 0.5 + DX[e.dir] * (it.pos - 0.5);
-      const iy = e.y + 0.5 + DY[e.dir] * (it.pos - 0.5);
+      const lane = it.lane || 0;
+      const perp = lane === 1 ? LANE_OFFSET : -LANE_OFFSET;
+      const ix = e.x + 0.5 + DX[e.dir] * (it.pos - 0.5) + DX[rightDir] * perp;
+      const iy = e.y + 0.5 + DY[e.dir] * (it.pos - 0.5) + DY[rightDir] * perp;
       const [isx, isy] = this.worldToScreen(ix, iy);
       ctx.drawImage(this.icon(it.item), isx - 5 * z, isy - 5 * z, 10 * z, 10 * z);
     }
