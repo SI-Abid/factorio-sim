@@ -56,6 +56,9 @@ const ITEMS = {
   'pipe':          { name: 'Pipe',          kind: 'machine', color: '#7d8891' },
   'boiler':        { name: 'Boiler',        kind: 'machine', color: '#8a5a3a' },
   'steel-forge':   { name: 'Steel Forge',   kind: 'machine', color: '#9aa8bd' },
+  'rail':          { name: 'Rail Track',     kind: 'machine', color: '#7d7d7d' },
+  'rail-depot':    { name: 'Rail Depot',     kind: 'machine', color: '#5a6470' },
+  'train':         { name: 'Hauler Train',   kind: 'machine', color: '#8a3030' },
 };
 
 // Recipes.
@@ -88,6 +91,9 @@ const RECIPES = [
   { id: 'boiler',        out: 'boiler',        n: 1, time: 3, in: { 'stone': 8, 'iron-ingot': 4 },           station: 'craft', tech: 'plumbing' },
   { id: 'steel-forge',   out: 'steel-forge',   n: 1, time: 4, in: { 'stone-brick': 10, 'iron-ingot': 8, 'gear': 4 }, station: 'craft', tech: 'steelworks' },
   { id: 'steel-gear',    out: 'steel-gear',    n: 1, time: 2, in: { 'steel-ingot': 1 },                      station: 'craft', tech: 'steelworks' },
+  { id: 'rail',          out: 'rail',          n: 4, time: 1, in: { 'iron-ingot': 1, 'stone': 1 },       station: 'craft', tech: 'railways' },
+  { id: 'rail-depot',    out: 'rail-depot',    n: 1, time: 3, in: { 'iron-ingot': 4, 'circuit': 2, 'gear': 2 }, station: 'craft', tech: 'railways' },
+  { id: 'train',         out: 'train',         n: 1, time: 5, in: { 'iron-ingot': 10, 'gear': 4, 'circuit': 2 }, station: 'craft', tech: 'railways' },
 ];
 const RECIPE_BY_ID = {};
 for (const r of RECIPES) RECIPE_BY_ID[r.id] = r;
@@ -120,6 +126,8 @@ const TECHS = [
     desc: 'Crafters work 50% faster.' },
   { id: 'omega',          name: 'Omega Research',    units: 40, packs: ['tome1', 'tome2'], req: ['logistics', 'efficiency', 'adv-automation'],
     desc: 'The final breakthrough. Completes the game.' },
+  { id: 'railways',       name: 'Railways',          units: 20, packs: ['tome1', 'tome2'], req: ['logistics', 'adv-tomes'],
+    desc: 'Unlocks Rail Track, Rail Depots, and Hauler Trains.' },
 ];
 const TECH_BY_ID = {};
 for (const t of TECHS) TECH_BY_ID[t.id] = t;
@@ -161,6 +169,12 @@ const ENTITY_DEFS = {
     desc: 'Burns coal to turn water from one adjacent pipe network into steam in another.' },
   'steel-forge':   { name: 'Steel Forge',   w: 3, h: 3, rot: false, tech: 'steelworks',
     desc: 'Uses steam plus iron ingots and coal to forge steel ingots.' },
+  'rail':          { name: 'Rail Track',    w: 1, h: 1, rot: false, tech: 'railways',
+    desc: 'Track for trains. Connects to adjacent rails (no signals).' },
+  'rail-depot':    { name: 'Rail Depot',    w: 1, h: 1, rot: true, tech: 'railways', cap: 100,
+    desc: 'A named train stop with a small buffer. Must be placed with a rail on its facing side.' },
+  'train':         { name: 'Hauler Train',  w: 1, h: 1, rot: false, tech: 'railways',
+    desc: 'A 2-car train. Place it on a rail; configure its route in its panel. Burns coal.' },
 };
 const BUILDABLE = Object.keys(ENTITY_DEFS);
 
@@ -200,6 +214,12 @@ const BOILER_FLOW = 6;       // water consumed & steam produced per second while
 const FORGE_STEAM_RATE = 2;  // steam/sec consumed by a working Steel Forge
 // Steel Forge's fixed internal recipe (not player-selectable, unlike Crafter recipes).
 const STEEL_RECIPE = { in: { 'iron-ingot': 2, 'coal': 1 }, out: 'steel-ingot', n: 1, time: 6 };
+
+// ---------- trains ----------
+const TRAIN_SPEED = 4;       // tiles/sec along the rail path
+const TRAIN_CARGO_CAP = 200; // items a train can carry
+const RAIL_DEPOT_CAP = 100;  // items a rail depot buffer can hold
+const TRAIN_DWELL = 4;       // seconds spent loading/unloading at a depot
 
 const STARTER_KIT = {
   'drill': 2, 'furnace': 4, 'conveyor': 30, 'grabber': 6, 'chest': 4,

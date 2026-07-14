@@ -99,8 +99,16 @@ const UI = {
     }
     const [tx, ty] = this.eventTile(e);
     if (e.button === 2) {
-      // right-click: cancel selection, else remove entity
+      // right-click: cancel selection, else remove entity/train
       if (this.buildSel) { this.cancelBuild(); return; }
+      const tr = trainAt(tx, ty);
+      if (tr) {
+        if (this.openEnt === tr) this.closePanel('panel-entity');
+        removeTrain(tr);
+        this.toast('Hauler Train removed (refunded)');
+        this.refreshToolbar();
+        return;
+      }
       const ent = entityAt(tx, ty);
       if (ent) {
         if (this.openEnt === ent) this.closePanel('panel-entity');
@@ -118,6 +126,8 @@ const UI = {
       this.dragPlacing = true;
       return;
     }
+    const tr = trainAt(tx, ty);
+    if (tr) { this.openEntityPanel(tr); return; }
     const ent = entityAt(tx, ty);
     if (ent) { this.openEntityPanel(ent); return; }
     if (World.oreAt(tx, ty)) {
@@ -148,7 +158,7 @@ const UI = {
     }
     const [tx, ty] = this.eventTile(e);
     this.hoverTile = [tx, ty];
-    this.hoverEnt = entityAt(tx, ty);
+    this.hoverEnt = trainAt(tx, ty) || entityAt(tx, ty);
 
     if (this.buildSel && this.dragPlacing && this.mouse.down) this.tryPlaceAt(tx, ty);
     if (G.handMine && (G.handMine.x !== tx || G.handMine.y !== ty) && this.mouse.down && !this.buildSel) {
@@ -254,8 +264,12 @@ const UI = {
     if (!document.getElementById('panel-craft').classList.contains('hidden')) this.renderCraftPanel();
     if (!document.getElementById('panel-tech').classList.contains('hidden')) this.renderTechPanel();
     if (this.openEnt) {
-      if (!G.entities.has(this.openEnt.id)) this.closePanel('panel-entity');
-      else this.renderEntityPanel();
+      const stillExists = G.entities.has(this.openEnt.id) || G.trains.includes(this.openEnt);
+      const panelEl = document.getElementById('panel-entity');
+      const editingText = document.activeElement && document.activeElement.tagName === 'INPUT' &&
+        panelEl.contains(document.activeElement);
+      if (!stillExists) this.closePanel('panel-entity');
+      else if (!editingText) this.renderEntityPanel();
     }
     this.refreshToolbar();
     this.updateHud();
@@ -513,6 +527,41 @@ const UI = {
           ${outN ? '<button class="mini-btn" data-act="takeout">Take</button>' : ''}</div>`;
         break;
       }
+      case 'rail-depot': {
+        html += `<div class="row">Name: <input type="text" id="depot-name" value="${e.name}" maxlength="24" style="width:140px"></div>`;
+        let total = 0; for (const k in e.store) total += e.store[k];
+        html += `<div class="row">Stored ${total}/${RAIL_DEPOT_CAP}</div><div class="icon-grid">`;
+        for (const k of Object.keys(e.store).sort()) {
+          html += `<div class="inv-slot" title="${ITEMS[k].name}">${this.iconImg(k, 20)}<span class="count">${e.store[k]}</span></div>`;
+        }
+        html += `</div>`;
+        html += `<div class="row"><button class="mini-btn" data-act="takeall">Take all</button></div>`;
+        html += `<div class="row">Deposit: `;
+        for (const it of Object.keys(G.inv).sort().slice(0, 8)) {
+          html += `<button class="mini-btn" data-act="deposit" data-item="${it}" title="${ITEMS[it].name}">${this.iconImg(it)}×10</button> `;
+        }
+        html += `</div>`;
+        break;
+      }
+      case 'train': {
+        html += fuelRow();
+        const depots = [];
+        for (const d of G.entities.values()) if (d.type === 'rail-depot') depots.push(d);
+        const depotOpts = (sel) => `<option value="">— none —</option>` +
+          depots.map(d => `<option value="${d.id}" ${sel === d.id ? 'selected' : ''}>${d.name}</option>`).join('');
+        html += `<div class="row">Depot A: <select id="train-depotA">${depotOpts(e.depotA)}</select></div>`;
+        html += `<div class="row">Depot B: <select id="train-depotB">${depotOpts(e.depotB)}</select></div>`;
+        html += `<div class="row">Route: <button class="mini-btn" data-act="toggleload">${
+          e.loadAtA ? 'Load at A → Unload at B' : 'Load at B → Unload at A'}</button></div>`;
+        let cargoTotal = 0; for (const k in e.cargo) cargoTotal += e.cargo[k];
+        html += `<div class="row">Cargo ${cargoTotal}/${TRAIN_CARGO_CAP}</div><div class="icon-grid">`;
+        for (const k of Object.keys(e.cargo).sort()) {
+          html += `<div class="inv-slot" title="${ITEMS[k].name}">${this.iconImg(k, 20)}<span class="count">${e.cargo[k]}</span></div>`;
+        }
+        html += `</div>`;
+        html += `<div class="row">Status: ${trainStatusText(e)}</div>`;
+        break;
+      }
     }
     body.innerHTML = html;
 
@@ -547,6 +596,9 @@ const UI = {
               invAdd(item, -1);
             }
             break;
+          case 'toggleload':
+            e.loadAtA = !e.loadAtA;
+            break;
         }
         this.renderEntityPanel();
         this.refreshToolbar();
@@ -560,6 +612,29 @@ const UI = {
         for (const k in e.output) invAdd(k, e.output[k]);
         e.input = {}; e.output = {}; e.progress = 0;
         e.recipe = sel.value || null;
+        this.renderEntityPanel();
+      };
+    }
+    const nameInput = body.querySelector('#depot-name');
+    if (nameInput) {
+      nameInput.onchange = () => {
+        e.name = nameInput.value.trim() || e.name;
+        this.renderEntityPanel();
+      };
+    }
+    const depotASel = body.querySelector('#train-depotA');
+    if (depotASel) {
+      depotASel.onchange = () => {
+        e.depotA = depotASel.value ? +depotASel.value : null;
+        e.path = null;
+        this.renderEntityPanel();
+      };
+    }
+    const depotBSel = body.querySelector('#train-depotB');
+    if (depotBSel) {
+      depotBSel.onchange = () => {
+        e.depotB = depotBSel.value ? +depotBSel.value : null;
+        e.path = null;
         this.renderEntityPanel();
       };
     }
@@ -622,6 +697,8 @@ const UI = {
       text += net && net.fluid ? `<br>${Math.round(net.amount)}/${net.cap} ${ITEMS[net.fluid].name}` : '<br>empty';
     }
     if (e.type === 'steel-forge') text += `<br>${e.active ? 'forging steel' : 'idle'} · out: ${e.output['steel-ingot'] || 0}`;
+    if (e.type === 'rail-depot') { let t2 = 0; for (const k in e.store) t2 += e.store[k]; text += `<br>${e.name} — ${t2}/${RAIL_DEPOT_CAP} stored`; }
+    if (e.type === 'train') text += `<br>${trainStatusText(e)}`;
     text += '<br><i>click to open · right-click to remove</i>';
     tip.innerHTML = text;
     tip.classList.remove('hidden');

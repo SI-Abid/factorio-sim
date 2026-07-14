@@ -39,11 +39,14 @@ coal, and stone**. Mine by hand, then automate:
 5. Craft **Basic Tomes**, feed them into a **Study Table**, and research technologies:
    the **Crafter** (automated crafting), **Fast Conveyors**, **Advanced Tomes**,
    drill/crafter speed boosts…
-6. Finish **Omega Research** to win. Then keep going — the forge must grow.
-7. Research **Plumbing** to unlock **Pumps** (place on the shore next to a lake),
+6. Research **Plumbing** to unlock **Pumps** (place on the shore next to a lake),
    **Pipes** (form single-fluid networks), and **Boilers** (coal + water → steam).
    Research **Steelworks** to unlock the **Steel Forge**, which turns steam + iron
    ingots + coal into **Steel Ingots**.
+7. Research **Railways** to unlock **Rail Track**, **Rail Depots** (named, renameable
+   stops with a small buffer), and **Hauler Trains** — 2-car units that BFS-pathfind
+   along your track and shuttle cargo between two depots, burning coal as they go.
+8. Finish **Omega Research** to win. Then keep going — the forge must grow.
 
 ### Controls
 
@@ -83,6 +86,9 @@ Progress autosaves to `localStorage` every minute (plus manual Save/Load buttons
   form connected networks that carry one fluid at a time (capacity-limited, mixing
   blocked); Boilers burn coal to convert water into steam in a separate network; a
   Steel Forge consumes steam plus iron ingots and coal to produce Steel Ingots
+- **Trains** — rails form an implicit graph (adjacent rail tiles connect); Hauler
+  Trains BFS-pathfind to a chosen depot, load/unload a configurable cargo swap, burn
+  coal while moving, and wait with a visible status if their track is broken
 
 ## Code layout
 
@@ -97,11 +103,13 @@ Progress autosaves to `localStorage` every minute (plus manual Save/Load buttons
 
 ## Roadmap ideas
 
-Trains, enemies/defense, blueprints, a minimap,
-and modded recipes are all natural next steps.
+Enemies/defense, blueprints, a minimap, rail signals/junctions, and modded
+recipes are all natural next steps.
 
 ## Development
 
 Everything is plain ES2020 — edit and refresh. A Playwright smoke test drives a full
 production chain headlessly (drill → belts → grabbers → furnace → chest, research,
-crafter, save/load) and screenshots the game; see `docs/`.
+crafter, save/load) and screenshots the game; see `docs/`. `tests/trains.test.js`
+covers the rail graph, an end-to-end fueled train haul between two depots, a
+broken-path waiting status, and a save/load round-trip mid-journey.
