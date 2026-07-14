@@ -48,6 +48,14 @@ const ITEMS = {
   'generator':     { name: 'Coal Generator', kind: 'machine', color: '#c85a30' },
   'pylon':         { name: 'Power Pylon',    kind: 'machine', color: '#e8c94a' },
   'volt-drill':    { name: 'Volt Drill',     kind: 'machine', color: '#4fa8d8' },
+  'steel-ingot':   { name: 'Steel Ingot',    kind: 'ingot',   color: '#b9c6d6', color2: '#7f8fa3' },
+  'steel-gear':    { name: 'Steel Gear',     kind: 'gear',    color: '#b9c6d6', color2: '#7f8fa3' },
+  'water':         { name: 'Water',         kind: 'fluid',   color: '#3a82c9', color2: '#2f6fb0' },
+  'steam':         { name: 'Steam',         kind: 'fluid',   color: '#e7edf2', color2: '#c3ccd6' },
+  'pump':          { name: 'Pump',          kind: 'machine', color: '#3a6fa0' },
+  'pipe':          { name: 'Pipe',          kind: 'machine', color: '#7d8891' },
+  'boiler':        { name: 'Boiler',        kind: 'machine', color: '#8a5a3a' },
+  'steel-forge':   { name: 'Steel Forge',   kind: 'machine', color: '#9aa8bd' },
 };
 
 // Recipes.
@@ -75,6 +83,11 @@ const RECIPES = [
   { id: 'generator',     out: 'generator',     n: 1, time: 3, in: { 'iron-ingot': 10, 'gear': 5, 'circuit': 5 }, station: 'craft', tech: 'electricity' },
   { id: 'pylon',         out: 'pylon',         n: 1, time: 1, in: { 'iron-ingot': 2, 'wire': 2 },        station: 'craft', tech: 'electricity' },
   { id: 'volt-drill',    out: 'volt-drill',    n: 1, time: 2, in: { 'iron-ingot': 5, 'gear': 3, 'circuit': 3, 'wire': 5 }, station: 'craft', tech: 'electricity' },
+  { id: 'pump',          out: 'pump',          n: 1, time: 2, in: { 'iron-ingot': 3, 'gear': 2, 'circuit': 1 }, station: 'craft', tech: 'plumbing' },
+  { id: 'pipe',          out: 'pipe',          n: 2, time: 1, in: { 'iron-ingot': 1 },                       station: 'craft', tech: 'plumbing' },
+  { id: 'boiler',        out: 'boiler',        n: 1, time: 3, in: { 'stone': 8, 'iron-ingot': 4 },           station: 'craft', tech: 'plumbing' },
+  { id: 'steel-forge',   out: 'steel-forge',   n: 1, time: 4, in: { 'stone-brick': 10, 'iron-ingot': 8, 'gear': 4 }, station: 'craft', tech: 'steelworks' },
+  { id: 'steel-gear',    out: 'steel-gear',    n: 1, time: 2, in: { 'steel-ingot': 1 },                      station: 'craft', tech: 'steelworks' },
 ];
 const RECIPE_BY_ID = {};
 for (const r of RECIPES) RECIPE_BY_ID[r.id] = r;
@@ -97,6 +110,10 @@ const TECHS = [
     desc: 'Unlocks crafting of Advanced Tomes.' },
   { id: 'electricity',    name: 'Electricity',      units: 20, packs: ['tome1', 'tome2'], req: ['adv-tomes'],
     desc: 'Unlocks the Coal Generator, Power Pylon, and Volt Drill.' },
+  { id: 'plumbing',       name: 'Plumbing',          units: 15, packs: ['tome1'], req: ['automation'],
+    desc: 'Unlocks the Pump, Pipe, and Boiler for fluid-powered production.' },
+  { id: 'steelworks',     name: 'Steelworks',        units: 20, packs: ['tome1', 'tome2'], req: ['plumbing', 'adv-tomes'],
+    desc: 'Unlocks the Steel Forge and steel-based recipes.' },
   { id: 'efficiency',     name: 'Efficient Drilling', units: 20, packs: ['tome1', 'tome2'], req: ['adv-tomes'],
     desc: 'Auto-Drills mine 50% faster.' },
   { id: 'adv-automation', name: 'Mass Production',   units: 20, packs: ['tome1', 'tome2'], req: ['automation', 'adv-tomes'],
@@ -136,6 +153,14 @@ const ENTITY_DEFS = {
     desc: 'Supplies power to machines within 5 tiles. Links into one grid with pylons within 7 tiles.' },
   'volt-drill':    { name: 'Volt Drill',    w: 2, h: 2, rot: true, tech: 'electricity',
     desc: 'Mines ore beneath it using grid power (1.5× an Auto-Drill\'s speed). Needs no fuel, but stalls without power.' },
+  'pump':          { name: 'Pump',          w: 1, h: 1, rot: true, tech: 'plumbing',
+    desc: 'Place on land at the shoreline, adjacent to water. Pumps water into any pipe it touches.' },
+  'pipe':          { name: 'Pipe',          w: 1, h: 1, rot: false, tech: 'plumbing',
+    desc: 'Carries one fluid at a time. Connects to adjacent pipes, pumps, boilers, and forges.' },
+  'boiler':        { name: 'Boiler',        w: 2, h: 2, rot: false, tech: 'plumbing',
+    desc: 'Burns coal to turn water from one adjacent pipe network into steam in another.' },
+  'steel-forge':   { name: 'Steel Forge',   w: 3, h: 3, rot: false, tech: 'steelworks',
+    desc: 'Uses steam plus iron ingots and coal to forge steel ingots.' },
 };
 const BUILDABLE = Object.keys(ENTITY_DEFS);
 
@@ -167,6 +192,14 @@ const POLE_LINK_RADIUS = 7;    // pylons within this Chebyshev distance join one
 const GEN_POWER_KW = 60;       // kW a Coal Generator supplies while burning
 const VOLT_DRILL_KW = 30;      // kW a Volt Drill draws while mining
 const VOLT_DRILL_SPEED_MULT = 1.5; // relative to the Auto-Drill's base speed, at full supply
+
+// ---------- fluids ----------
+const PIPE_CAP = 20;         // fluid units of capacity contributed by each pipe segment
+const PUMP_RATE = 10;        // water/sec a pump adds to the network it touches
+const BOILER_FLOW = 6;       // water consumed & steam produced per second while a boiler burns fuel (1:1)
+const FORGE_STEAM_RATE = 2;  // steam/sec consumed by a working Steel Forge
+// Steel Forge's fixed internal recipe (not player-selectable, unlike Crafter recipes).
+const STEEL_RECIPE = { in: { 'iron-ingot': 2, 'coal': 1 }, out: 'steel-ingot', n: 1, time: 6 };
 
 const STARTER_KIT = {
   'drill': 2, 'furnace': 4, 'conveyor': 30, 'grabber': 6, 'chest': 4,

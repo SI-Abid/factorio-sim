@@ -62,6 +62,18 @@ const Renderer = {
 
   paintTile(tc, x, y) {
     const px = x * TILE, py = y * TILE;
+    if (World.isWater(x, y)) {
+      // Baked (static) two-tone water pattern — no per-frame animation needed.
+      tc.fillStyle = '#2f6fb0';
+      tc.fillRect(px, py, TILE, TILE);
+      for (let i = 0; i < 10; i++) {
+        const h1 = tileHash(x * 41 + i, y * 19 + i, World.seed ^ (i + 900));
+        const h2 = tileHash(x * 23 + i * 3, y * 37 + i, World.seed ^ (i + 950));
+        tc.fillStyle = h1 > 0.5 ? '#3a82c9' : 'rgba(255,255,255,0.08)';
+        tc.fillRect(px + Math.floor(h1 * 8) * 2, py + Math.floor(h2 * 8) * 2, 2, 2);
+      }
+      return;
+    }
     const ore = World.oreAt(x, y);
     // grass base with pixel noise
     const g = ['#5d9b3c', '#579237', '#63a441', '#549035'];
@@ -284,6 +296,49 @@ const Renderer = {
         px(W / 2 - 3, 3, 6, 1, '#e8c34a');
         break;
       }
+      case 'pump': {
+        px(0, 0, W, H, '#38506a');
+        px(1, 1, W - 2, H - 2, '#4c6f92');
+        px(4, 4, 8, 8, '#274154');                    // housing
+        px(6, 6, 4, 4, '#8fc7ff');                     // water window
+        px(7, 0, 2, 4, '#8fc7ff');                     // intake stub (north)
+        px(7, H - 4, 2, 4, '#8fc7ff');                 // output stub (south)
+        for (const [bx, by] of [[1, 1], [W - 2, 1], [1, H - 2], [W - 2, H - 2]]) px(bx, by, 1, 1, '#1c2a38');
+        break;
+      }
+      case 'pipe': {
+        // Not rotatable — drawn as a cross so it reads as connecting on all 4 sides.
+        px(0, 0, W, H, '#5d6a75');
+        px(6, 0, 4, H, '#7d8891');
+        px(0, 6, W, 4, '#7d8891');
+        px(6, 6, 4, 4, '#454d55');
+        px(6, 0, 4, 2, '#9aa4ac'); px(6, H - 2, 4, 2, '#9aa4ac');
+        px(0, 6, 2, 4, '#9aa4ac'); px(W - 2, 6, 2, 4, '#9aa4ac');
+        break;
+      }
+      case 'boiler': {
+        px(0, 0, W, H, '#5a4634');
+        px(1, 1, W - 2, H - 2, '#7a5f42');
+        px(3, 3, W - 6, 10, '#3a3a3e');                // water-tank band
+        px(4, 4, W - 8, 8, '#4f7fae');
+        px(W / 2 - 6, H - 11, 12, 8, '#2b2318');       // firebox mouth (south)
+        px(W / 2 - 4, H - 9, 8, 6, '#150f0a');
+        px(W - 9, 2, 5, 6, '#2e2a26');                 // smokestack hint
+        for (const [bx, by] of [[2, 2], [W - 4, 2], [2, H - 4], [W - 4, H - 4]]) px(bx, by, 2, 2, '#2b2318');
+        break;
+      }
+      case 'steel-forge': {
+        px(0, 0, W, H, '#5c6674');
+        px(1, 1, W - 2, H - 2, '#8b96a3');
+        px(3, 3, W - 6, H - 6, '#727c88');
+        const gx0 = W / 2 - 10, gy0 = H / 2 - 8;
+        px(gx0, gy0, 20, 16, '#2a2e33');               // forge slot
+        px(gx0 + 2, gy0 + 2, 16, 12, '#171a1d');
+        for (const [bx, by] of [[3, 3], [W - 5, 3], [3, H - 5], [W - 5, H - 5]]) px(bx, by, 2, 2, '#3d444c');
+        px(6, 6, 4, 4, '#c7d3de');                     // steam vents
+        px(W - 10, 6, 4, 4, '#c7d3de');
+        break;
+      }
     }
     return c;
   },
@@ -339,6 +394,12 @@ const Renderer = {
         x.drawImage(s, 0, 0, s.width, s.height, 1, 1, 14, 14);
         break;
       }
+      case 'fluid':
+        px(3, 2, 10, 3, def.color2);
+        px(2, 5, 12, 8, def.color);
+        px(4, 6, 8, 1, 'rgba(255,255,255,0.4)');
+        px(3, 12, 10, 2, def.color2);
+        break;
     }
     this.icons[id] = c;
     this.iconURLs[id] = c.toDataURL();
@@ -529,6 +590,40 @@ const Renderer = {
     ctx.fillRect(cx - 2 * z, cy + 3 * z, 3 * z, 3 * z);
     ctx.fillRect(cx + 1 * z, cy + 6 * z, 3 * z, 3 * z);
     ctx.fillRect(cx - 1 * z, cy + 9 * z, 3 * z, 3 * z);
+    if (e.type === 'boiler' && e.active) {
+      const flick = 0.5 + 0.5 * Math.sin(G.time * 10 + e.id);
+      ctx.fillStyle = `rgba(255,${120 + 80 * flick | 0},40,0.85)`;
+      ctx.fillRect(ex + (d.w * TILE / 2 - 5) * z, ey + (d.h * TILE - 9) * z, 10 * z, 6 * z);
+    }
+    if (e.type === 'pump' && e.active) {
+      const t = (G.time * 1.5) % 1;
+      const [cx, cy] = this.worldToScreen(e.x + 0.5, e.y + 0.5);
+      ctx.strokeStyle = 'rgba(120,190,255,0.8)';
+      ctx.lineWidth = Math.max(1, z);
+      ctx.beginPath();
+      ctx.arc(cx, cy, (3 + 3 * t) * z, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    if (e.type === 'pipe') {
+      const net = fluidNetFor(e);
+      if (net && net.fluid && net.amount > 0.05) {
+        const frac = Math.min(1, net.amount / net.cap);
+        ctx.fillStyle = net.fluid === 'water' ? 'rgba(58,130,201,0.55)' : 'rgba(231,237,242,0.6)';
+        const h = TILE * z * frac;
+        ctx.fillRect(ex + 3 * z, ey + TILE * z - h, (TILE - 6) * z, h);
+      }
+    }
+    if (e.type === 'steel-forge') {
+      if (e.active) {
+        const flick = 0.5 + 0.5 * Math.sin(G.time * 8 + e.id);
+        ctx.fillStyle = `rgba(150,210,255,${0.5 + 0.3 * flick})`;
+        ctx.fillRect(ex + (d.w * TILE / 2 - 6) * z, ey + (d.h * TILE / 2 - 6) * z, 12 * z, 12 * z);
+      }
+      const outN = e.output[STEEL_RECIPE.out] || 0;
+      if (outN) {
+        ctx.drawImage(this.icon(STEEL_RECIPE.out), ex + (d.w * TILE - 18) * z, ey + (d.h * TILE - 18) * z, 16 * z, 16 * z);
+      }
+    }
   },
 
   drawBelt(e) {

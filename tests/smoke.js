@@ -33,6 +33,7 @@ const URL = 'file://' + path.resolve(__dirname, '..', 'index.html');
     for (let ty = y; ty < y + 2; ty++) for (let tx = x; tx < x + 2; tx++) {
       const i = World.idx(tx, ty);
       World.oreType[i] = 1; World.oreAmount[i] = 500;
+      if (World.water) World.water[i] = 0;
     }
     G.inv['drill'] = 1; G.inv['furnace'] = 1; G.inv['conveyor'] = 5;
     G.inv['grabber'] = 5; G.inv['chest' ] = 1; G.inv['coal'] = 50;

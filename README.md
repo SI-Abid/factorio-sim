@@ -40,6 +40,10 @@ coal, and stone**. Mine by hand, then automate:
    the **Crafter** (automated crafting), **Fast Conveyors**, **Advanced Tomes**,
    drill/crafter speed boosts…
 6. Finish **Omega Research** to win. Then keep going — the forge must grow.
+7. Research **Plumbing** to unlock **Pumps** (place on the shore next to a lake),
+   **Pipes** (form single-fluid networks), and **Boilers** (coal + water → steam).
+   Research **Steelworks** to unlock the **Steel Forge**, which turns steam + iron
+   ingots + coal into **Steel Ingots**.
 
 ### Controls
 
@@ -75,6 +79,10 @@ Progress autosaves to `localStorage` every minute (plus manual Save/Load buttons
 - **Electricity** — Coal Generators feed Power Pylon networks (grouped by proximity each tick);
   Volt Drills draw power instead of fuel and slow down proportionally when the grid is undersupplied
 - **Hand crafting** with a queue, plus a guided hint line for new players
+- **Fluids** — seeded lakes block building except for the shore-placed Pump; Pipes
+  form connected networks that carry one fluid at a time (capacity-limited, mixing
+  blocked); Boilers burn coal to convert water into steam in a separate network; a
+  Steel Forge consumes steam plus iron ingots and coal to produce Steel Ingots
 
 ## Code layout
 
@@ -89,7 +97,7 @@ Progress autosaves to `localStorage` every minute (plus manual Save/Load buttons
 
 ## Roadmap ideas
 
-Fluids & pipes, trains, enemies/defense, blueprints, a minimap,
+Trains, enemies/defense, blueprints, a minimap,
 and modded recipes are all natural next steps.
 
 ## Development

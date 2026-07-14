@@ -32,7 +32,8 @@ const URL = 'file://' + path.join(ROOT, 'index.html');
     const paintOre = (x, y, w, h) => {
       for (let ty = y; ty < y + h; ty++) for (let tx = x; tx < x + w; tx++) {
         const i = World.idx(tx, ty);
-        World.oreType[i] = 1; World.oreAmount[i] = 500; // iron
+        World.oreType[i] = 1; World.oreAmount[i] = 500;
+        if (World.water) World.water[i] = 0; // keep synthetic patches buildable on lake-bearing worlds
       }
     };
     const pole = placeEntity('pylon', 20, 20, 0);
@@ -66,6 +67,7 @@ const URL = 'file://' + path.join(ROOT, 'index.html');
     for (let ty = 60; ty < 62; ty++) for (let tx = 60; tx < 62; tx++) {
       const i = World.idx(tx, ty);
       World.oreType[i] = 1; World.oreAmount[i] = 500;
+      if (World.water) World.water[i] = 0;
     }
     const drill = placeEntity('volt-drill', 60, 60, 0); // no pylon anywhere nearby
     if (!drill) return { placed: false };
@@ -90,6 +92,7 @@ const URL = 'file://' + path.join(ROOT, 'index.html');
       for (let ty = y; ty < y + h; ty++) for (let tx = x; tx < x + w; tx++) {
         const i = World.idx(tx, ty);
         World.oreType[i] = 1; World.oreAmount[i] = 500;
+      if (World.water) World.water[i] = 0;
       }
     };
     // Network A: one 60kW generator feeding three 30kW volt-drills (90kW demand -> 2/3 satisfaction).
